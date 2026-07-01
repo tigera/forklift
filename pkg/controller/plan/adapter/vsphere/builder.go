@@ -908,6 +908,16 @@ func (r *Builder) mapNetworks(vm *model.VM, object *cnv.VirtualMachineSpec) (err
 	staticIpInterfaces := make(map[string][]string)
 	calicoMacInterfaces := map[string]string{}
 	calicoIpInterfaces := map[string][]string{}
+	// A calico-flagged pod mapping produces at most one NIC's worth of
+	// primary annotations per VM: the map-level validator rejects multiple
+	// calico-flagged entries, and the per-VM VMMultiplePodNetworkMappings
+	// Critical rejects a VM with two NICs resolving to one pod entry — so
+	// single locals are enough.
+	var calicoPrimary bool
+	var calicoPrimaryMAC string
+	var calicoPrimaryIPs []string
+	var calicoPrimaryNetwork string
+	var calicoPrimaryVlan uint16
 
 	// cache for network configs to avoid duplicate GETs.
 	nadCache := map[k8stypes.NamespacedName]*ocpmodel.NetworkConfig{}
@@ -966,7 +976,27 @@ func (r *Builder) mapNetworks(vm *model.VM, object *cnv.VirtualMachineSpec) (err
 		switch mapped.Destination.Type {
 		case Pod:
 			kNetwork.Pod = &cnv.PodNetwork{}
-			if hasUDN {
+			if mapped.Destination.Calico != nil {
+				// The destination's default pod network is Calico and the
+				// user opted into identity preservation: Bridge binding
+				// always, MAC always, IPs when the Plan preserves static
+				// IPs, Network + Vlan annotations when the user named a
+				// projectcalico.org/v3 Network CR. Plan validation rejects
+				// a network entry without an explicit VLAN, so a named
+				// Network always arrives here with a non-zero Vlan.
+				kInterface.Bridge = &cnv.InterfaceBridge{}
+				calicoPrimary = true
+				calicoPrimaryMAC = nic.MAC
+				if r.Plan.Spec.PreserveStaticIPs {
+					if ips := findInterfaceIps(vm, nic); len(ips) > 0 {
+						calicoPrimaryIPs = ips
+					}
+				}
+				if mapped.Destination.Calico.Network != "" {
+					calicoPrimaryNetwork = mapped.Destination.Calico.Network
+					calicoPrimaryVlan = mapped.Destination.Calico.Vlan
+				}
+			} else if hasUDN {
 				kInterface.Binding = &cnv.PluginBinding{
 					Name: planbase.UdnL2bridge,
 				}
@@ -999,6 +1029,10 @@ func (r *Builder) mapNetworks(vm *model.VM, object *cnv.VirtualMachineSpec) (err
 				nadCache[nadKey] = cfg
 			}
 			if cfg != nil && cfg.ReferencesCalicoNetwork() {
+				// Calico identity preservation on a secondary NIC: the
+				// source MAC is always carried over via the scoped hwAddr
+				// annotation, and the source IPs when the Plan preserves
+				// static IPs. Non-Calico NADs are untouched.
 				calicoMacInterfaces[networkName] = nic.MAC
 				if r.Plan.Spec.PreserveStaticIPs {
 					if ips := findInterfaceIps(vm, nic); len(ips) > 0 {
@@ -1034,6 +1068,23 @@ func (r *Builder) mapNetworks(vm *model.VM, object *cnv.VirtualMachineSpec) (err
 		if err = planbase.SetCalicoStaticIPs(&object.Template.ObjectMeta, ifname, ips); err != nil {
 			return
 		}
+	}
+	if err = planbase.StampCalicoPrimary(&object.Template.ObjectMeta, planbase.CalicoPrimaryParams{
+		MAC:     calicoPrimaryMAC,
+		IPs:     calicoPrimaryIPs,
+		Network: calicoPrimaryNetwork,
+		Vlan:    calicoPrimaryVlan,
+	}); err != nil {
+		return
+	}
+	// Bridge binding on the pod network blocks live migration unless the
+	// VM opts in. Calico's IP persistence is designed to survive live
+	// migration, so opt calico-primary VMs in.
+	if calicoPrimary {
+		if object.Template.ObjectMeta.Annotations == nil {
+			object.Template.ObjectMeta.Annotations = map[string]string{}
+		}
+		object.Template.ObjectMeta.Annotations[planbase.AnnAllowPodBridgeNetworkLiveMigration] = "true"
 	}
 	return
 }
