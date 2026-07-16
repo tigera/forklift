@@ -11252,6 +11252,7 @@ rules:
   - networks
   - ippools
   - felixconfigurations
+  - bgppeers
   verbs:
   - get
   - list
