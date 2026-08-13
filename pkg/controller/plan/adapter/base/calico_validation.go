@@ -29,6 +29,15 @@ type ResolvedCalicoNAD struct {
 	// L2Workload pools within the VLAN's subnets for l2Bridge networks,
 	// L3-eligible pools for vrf networks.
 	EligiblePools []calicoclient.IPPool
+	// VRFCoversAllNodes reports whether any of the VRF Network's hostConfig
+	// entries applies to every node (empty nodeSelector). Input to the
+	// plan-scoped placement check (CalicoNADPlanIssues); meaningful only
+	// when IsVRF.
+	VRFCoversAllNodes bool
+	// VRFPoolsPinned reports whether the NAD's IPAM config pins one or more
+	// IPPools (ipv4_pools). Input to the plan-scoped pool-pinning warning
+	// (CalicoNADPlanIssues); meaningful only when IsVRF.
+	VRFPoolsPinned bool
 }
 
 // CalicoValidationCache holds resolved state for every Calico-referencing

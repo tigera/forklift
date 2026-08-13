@@ -155,6 +155,8 @@ func (r *Reconciler) validateDestination(mp *api.NetworkMap) (err error) {
 	ambiguous := []string{}
 	networkIPModeInvalid := []string{}
 	networkIPModeHasCritical := false
+	hasCalicoBlock := false
+	hasMultus := false
 next:
 	for _, entry := range list {
 		if entry.Destination.Type == Ignored && entry.NetworkIPMode != "" {
@@ -164,10 +166,14 @@ next:
 		if entry.Destination.Type == Pod && entry.NetworkIPMode == api.NetworkIPModePreserve {
 			networkIPModeInvalid = append(networkIPModeInvalid, entry.Source.String())
 		}
+		if entry.Destination.Calico != nil {
+			hasCalicoBlock = true
+		}
 		switch entry.Destination.Type {
 		case Ignored, Pod:
 			continue next
 		case Multus:
+			hasMultus = true
 			if entry.Destination.Namespace == "" {
 				ambiguous = append(
 					ambiguous,
@@ -229,5 +235,5 @@ next:
 		})
 	}
 
-	return
+	return r.validateCalico(mp, hasCalicoBlock, hasMultus)
 }
