@@ -562,32 +562,35 @@ func (r *Reconciler) validateUserDefinedNetwork(ctx *plancontext.Context) (err e
 // references. Healthy NADs are returned in a cache for per-VM checks.
 func (r *Reconciler) validateCalicoNetwork(ctx *plancontext.Context) (*planbase.CalicoValidationCache, error) {
 	provider := ctx.Plan.Referenced.Provider.Source
-	if provider == nil {
+	if provider == nil || provider.Type() != api.VSphere {
 		return nil, nil
 	}
-	pAdapter, err := adapter.New(provider)
+	if ctx.Plan.Referenced.Map.Network == nil {
+		return nil, nil
+	}
+	// Map-scoped issues are surfaced as NetworkMap conditions by the
+	// NetworkMap controller; this pass only rebuilds the cache the per-VM
+	// checks read from and evaluates the plan-scoped concerns.
+	result, err := planbase.ValidateCalicoNADs(
+		context.TODO(), ctx.Destination.Client,
+		ctx.Plan.Referenced.Map.Network.Spec.Map, r.Log)
 	if err != nil {
 		return nil, err
 	}
-	validator, err := pAdapter.Validator(ctx)
-	if err != nil {
-		return nil, err
-	}
-	result, err := validator.ValidateCalicoNADs(ctx.Destination.Client)
-	if err != nil {
-		return nil, err
-	}
-	if cond, ok := buildCalicoNADCondition(
+	planHasPlacement := len(ctx.Plan.Spec.TargetNodeSelector) > 0 || ctx.Plan.Spec.TargetAffinity != nil
+	criticals, warnings := planbase.CalicoNADPlanIssues(
+		result.Cache, ctx.Plan.Spec.PreserveStaticIPs, planHasPlacement)
+	if cond, ok := planbase.BuildCalicoNADCondition(
 		CalicoNetworkInvalid, api.CategoryCritical,
 		"One or more Calico Network destinations are invalid",
-		result.Issues,
+		criticals,
 	); ok {
 		ctx.Plan.Status.SetCondition(cond)
 	}
-	if cond, ok := buildCalicoNADCondition(
+	if cond, ok := planbase.BuildCalicoNADCondition(
 		CalicoNetworkWarning, api.CategoryWarn,
 		"One or more Calico NADs will not receive identity preservation",
-		result.Warnings,
+		warnings,
 	); ok {
 		ctx.Plan.Status.SetCondition(cond)
 	}
@@ -602,22 +605,41 @@ func (r *Reconciler) validateCalicoNetwork(ctx *plancontext.Context) (*planbase.
 // so both layers fold into a single condition.
 func (r *Reconciler) validateCalicoPrimary(ctx *plancontext.Context) (*planbase.CalicoPrimaryValidationResult, error) {
 	provider := ctx.Plan.Referenced.Provider.Source
-	if provider == nil {
+	if provider == nil || provider.Type() != api.VSphere {
 		return &planbase.CalicoPrimaryValidationResult{}, nil
 	}
-	pAdapter, err := adapter.New(provider)
+	if ctx.Plan.Referenced.Map.Network == nil {
+		return &planbase.CalicoPrimaryValidationResult{}, nil
+	}
+	pairs := ctx.Plan.Referenced.Map.Network.Spec.Map
+	// Map-scoped issues are surfaced as NetworkMap conditions by the
+	// NetworkMap controller; this pass only rebuilds the cache the per-VM
+	// checks read from and evaluates the plan-scoped concerns.
+	result, err := planbase.ValidateCalicoPrimary(
+		context.TODO(), ctx.Destination.Client, pairs, r.Log)
 	if err != nil {
 		return nil, err
 	}
-	validator, err := pAdapter.Validator(ctx)
-	if err != nil {
-		return nil, err
+	result.Issues = nil
+	result.Warnings = nil
+	if planbase.HasCalicoPodEntry(pairs) && !ctx.Plan.Spec.PreserveStaticIPs {
+		result.Warnings = append(result.Warnings, planbase.CalicoPrimaryIssue{
+			Kind: planbase.CalicoIssuePrimaryStaticIPsNotPreserved,
+		})
 	}
-	result, err := validator.ValidateCalicoPrimary(ctx.Destination.Client)
-	if err != nil {
-		return nil, err
+	// The UDN conflict depends on the plan's target namespace, so it stays a
+	// plan-level Critical; it also invalidates the cache so per-VM checks
+	// and the deferred CalicoPrimaryInvalid fold treat the entry as failed.
+	if result.Cache != nil && result.Cache.Primary != nil && ctx.Plan.DestinationHasUdnNetwork(ctx.Destination.Client) {
+		primary := result.Cache.Primary
+		result.Issues = append(result.Issues, planbase.CalicoPrimaryIssue{
+			Kind:    planbase.CalicoIssuePrimaryConflictsWithUDN,
+			Network: primary.Network,
+			VLAN:    primary.VLAN.VID,
+		})
+		result.Cache.Primary = nil
 	}
-	if cond, ok := buildCalicoPrimaryCondition(
+	if cond, ok := planbase.BuildCalicoPrimaryCondition(
 		CalicoPrimaryWarning, api.CategoryWarn,
 		"The Calico primary-network mapping has informational warnings",
 		result.Warnings,
@@ -625,77 +647,6 @@ func (r *Reconciler) validateCalicoPrimary(ctx *plancontext.Context) (*planbase.
 		ctx.Plan.Status.SetCondition(cond)
 	}
 	return &result, nil
-}
-
-// buildCalicoPrimaryCondition assembles a plan-level Calico-primary condition
-// from a slice of issues. Items deduplicate by issue ref (per-VM VMRef when
-// set, or a "(plan)" synthetic identifier for plan-level issues). Message
-// concatenates a per-issue detail phrase. Returns ok=false when issues is
-// empty so callers can skip SetCondition.
-func buildCalicoPrimaryCondition(condType, category, baseMsg string, issues []planbase.CalicoPrimaryIssue) (libcnd.Condition, bool) {
-	if len(issues) == 0 {
-		return libcnd.Condition{}, false
-	}
-	cond := libcnd.Condition{
-		Type:     condType,
-		Status:   True,
-		Reason:   NotValid,
-		Category: category,
-		Items:    []string{},
-	}
-	details := make([]string, 0, len(issues))
-	seen := map[string]bool{}
-	for _, issue := range issues {
-		item := calicoPrimaryIssueItem(issue)
-		if !seen[item] {
-			seen[item] = true
-			cond.Items = append(cond.Items, item)
-		}
-		details = append(details, calicoPrimaryIssueDetail(issue))
-	}
-	cond.Message = fmt.Sprintf("%s: %s.", baseMsg, strings.Join(details, "; "))
-	return cond, true
-}
-
-// calicoPrimaryIssueItem returns the Items entry for an issue. Per-VM issues
-// use the VMRef; plan-level issues use a synthetic "(plan)" identifier since
-// there is no resource-specific ref to attach (the offending NetworkMap entry
-// is plan-scoped).
-func calicoPrimaryIssueItem(i planbase.CalicoPrimaryIssue) string {
-	if !i.VMRef.NotSet() {
-		return i.VMRef.String()
-	}
-	return "(plan)"
-}
-
-// buildCalicoNADCondition assembles a plan-level Calico NAD condition from a
-// slice of per-NAD issues. Items are deduplicated by NAD reference; Message
-// concatenates a per-issue detail phrase for each (including duplicates, so
-// distinct kinds against the same NAD are both visible). Returns ok=false
-// when issues is empty so callers can skip SetCondition.
-func buildCalicoNADCondition(condType, category, baseMsg string, issues []planbase.CalicoNADIssue) (libcnd.Condition, bool) {
-	if len(issues) == 0 {
-		return libcnd.Condition{}, false
-	}
-	cond := libcnd.Condition{
-		Type:     condType,
-		Status:   True,
-		Reason:   NotValid,
-		Category: category,
-		Items:    []string{},
-	}
-	details := make([]string, 0, len(issues))
-	seen := map[string]bool{}
-	for _, issue := range issues {
-		ref := issue.NAD.String()
-		if !seen[ref] {
-			seen[ref] = true
-			cond.Items = append(cond.Items, ref)
-		}
-		details = append(details, calicoNADIssueDetail(issue))
-	}
-	cond.Message = fmt.Sprintf("%s: %s.", baseMsg, strings.Join(details, "; "))
-	return cond, true
 }
 
 func (r *Reconciler) getDestinationNamespaceNads(ctx *plancontext.Context) (*k8snet.NetworkAttachmentDefinitionList, error) {
@@ -1649,7 +1600,7 @@ func (r *Reconciler) validateVM(plan *api.Plan, ctx *plancontext.Context, calico
 	// CalicoPrimaryInvalid carries both plan-level (from validateCalicoPrimary)
 	// and per-VM (collected during this validateVM pass) issues.
 	if calicoPrimaryResult != nil {
-		if cond, ok := buildCalicoPrimaryCondition(
+		if cond, ok := planbase.BuildCalicoPrimaryCondition(
 			CalicoPrimaryInvalid, api.CategoryCritical,
 			"The Calico primary-network mapping is not valid",
 			calicoPrimaryResult.Issues,
@@ -2089,106 +2040,6 @@ func (r *Reconciler) validateVddkImage(plan *api.Plan) (err error) {
 	}
 
 	return
-}
-
-// calicoPrimaryIssueDetail formats a per-issue detail phrase for the
-// plan-level CalicoPrimaryInvalid / CalicoPrimaryWarning Message. Per-VM
-// issues carry a VMRef prefix; plan-level issues do not.
-func calicoPrimaryIssueDetail(i planbase.CalicoPrimaryIssue) string {
-	prefix := ""
-	if !i.VMRef.NotSet() {
-		prefix = i.VMRef.String() + " "
-	}
-	switch i.Kind {
-	case planbase.CalicoIssuePrimaryProviderUnsupported:
-		return fmt.Sprintf("%s(PrimaryProviderUnsupported: feature is vSphere-only in this release)", prefix)
-	case planbase.CalicoIssuePrimaryUnsupported:
-		return fmt.Sprintf("%s(PrimaryUnsupported: Calico is not installed on the destination — projectcalico.org/v3 IPPool CRD absent)", prefix)
-	case planbase.CalicoIssuePrimaryNetworkCRDAbsent:
-		return fmt.Sprintf("%s(PrimaryNetworkCRDAbsent network=%q: destination Calico install does not ship the projectcalico.org/v3 Network CRD; remove calico.network or upgrade Calico)", prefix, i.Network)
-	case planbase.CalicoIssuePrimaryConflictsWithUDN:
-		return fmt.Sprintf("%s(PrimaryConflictsWithUDN: target namespace is labelled for a UDN primary network)", prefix)
-	case planbase.CalicoIssuePrimaryNetworkNotFound:
-		return fmt.Sprintf("%s(PrimaryNetworkNotFound network=%q)", prefix, i.Network)
-	case planbase.CalicoIssuePrimaryNetworkTypeUnsupported:
-		return fmt.Sprintf("%s(PrimaryNetworkTypeUnsupported network=%q: the referenced Network is not an L2 bridge network; only l2Bridge networks can back the primary NIC — a VRF network attaches via a multus NAD instead)", prefix, i.Network)
-	case planbase.CalicoIssuePrimaryDataplaneNotBPF:
-		return fmt.Sprintf("%s(PrimaryDataplaneNotBPF network=%q: the destination Calico install is not running the BPF dataplane; L2 networks require FelixConfiguration bpfEnabled: true)", prefix, i.Network)
-	case planbase.CalicoIssuePrimaryNetworkHasNoL2Bridge:
-		return fmt.Sprintf("%s(PrimaryNetworkHasNoL2Bridge network=%q)", prefix, i.Network)
-	case planbase.CalicoIssuePrimaryNetworkHasNoVLANs:
-		return fmt.Sprintf("%s(PrimaryNetworkHasNoVLANs network=%q)", prefix, i.Network)
-	case planbase.CalicoIssuePrimaryVLANRequired:
-		return fmt.Sprintf("%s(PrimaryVLANRequired network=%q: calico.network is set but calico.vlan is not; an explicit VLAN is required)", prefix, i.Network)
-	case planbase.CalicoIssuePrimaryVLANNotInNetwork:
-		return fmt.Sprintf("%s(PrimaryVLANNotInNetwork network=%q vlan=%d)", prefix, i.Network, i.VLAN)
-	case planbase.CalicoIssuePrimaryNoEligibleIPPool:
-		if i.IP != "" {
-			return fmt.Sprintf("%s(PrimaryNoEligibleIPPool ip=%s network=%q vlan=%d)", prefix, i.IP, i.Network, i.VLAN)
-		}
-		return fmt.Sprintf("%s(PrimaryNoEligibleIPPool network=%q vlan=%d)", prefix, i.Network, i.VLAN)
-	case planbase.CalicoIssuePrimaryIPNotInSubnet:
-		return fmt.Sprintf("%s(PrimaryIPNotInSubnet ip=%s network=%q vlan=%d)", prefix, i.IP, i.Network, i.VLAN)
-	case planbase.CalicoIssuePrimaryTooManyIPs:
-		return fmt.Sprintf("%s(PrimaryTooManyIPs ips=%s: Calico static IP preservation supports at most one IPv4 per interface)", prefix, i.IP)
-	case planbase.CalicoIssuePrimaryFieldsMisplaced:
-		return fmt.Sprintf("%s(PrimaryFieldsMisplaced: calico block set on a non-pod entry, calico.vlan without calico.network, or multiple calico-flagged entries)", prefix)
-	case planbase.CalicoIssuePrimaryStaticIPsNotPreserved:
-		return fmt.Sprintf("%s(PrimaryStaticIPsNotPreserved: preserveStaticIPs is false; DHCP-configured guests will pick up the Calico-assigned IP via the veth, static-IP guests may have a divergent in-guest IP)", prefix)
-	}
-	return fmt.Sprintf("%s(%s)", prefix, i.Kind)
-}
-
-// calicoNADIssueDetail formats a per-NAD detail phrase for the plan-level
-// CalicoNetworkInvalid condition's Message: e.g.
-// "default/foo (NetworkNotFound network=\"calico-vlan\")".
-func calicoNADIssueDetail(i planbase.CalicoNADIssue) string {
-	switch i.Kind {
-	case planbase.CalicoIssueNADUnreadable:
-		return fmt.Sprintf("%s (NADUnreadable)", i.NAD.String())
-	case planbase.CalicoIssueNetworkNotFound:
-		return fmt.Sprintf("%s (NetworkNotFound network=%q)", i.NAD.String(), i.Network)
-	case planbase.CalicoIssueNetworkCRDAbsent:
-		return fmt.Sprintf("%s (NetworkCRDAbsent network=%q: destination Calico install does not ship the projectcalico.org/v3 Network CRD)", i.NAD.String(), i.Network)
-	case planbase.CalicoIssueVRFVlanIgnored:
-		return fmt.Sprintf("%s (VRFVlanIgnored network=%q vlan=%d: the referenced Network is a VRF (routed) network; VLANs apply only to l2Bridge networks and the vlan value is ignored)", i.NAD.String(), i.Network, i.VLAN)
-	case planbase.CalicoIssueVRFNodeScoped:
-		return fmt.Sprintf("%s (VRFNodeScoped network=%q: every hostConfig entry carries a nodeSelector, so the network exists only on matching nodes, and the plan does not constrain VM placement; VMs may schedule onto uncovered nodes and fail to start — set the plan's targetNodeSelector or targetAffinity to keep VMs on covered nodes, or add a hostConfig entry without a nodeSelector)", i.NAD.String(), i.Network)
-	case planbase.CalicoIssueVRFPlacementUnverified:
-		return fmt.Sprintf("%s (VRFPlacementUnverified network=%q: the network exists only on nodes matching its hostConfig selectors; the plan constrains VM placement, but Forklift cannot verify that placement keeps VMs on covered nodes)", i.NAD.String(), i.Network)
-	case planbase.CalicoIssueVRFRouteTableReserved:
-		return fmt.Sprintf("%s (VRFRouteTableReserved network=%q table=%d: route tables 253, 254 and 255 are reserved by the kernel; choose a different routeTableIndex)", i.NAD.String(), i.Network, i.RouteTable)
-	case planbase.CalicoIssueVRFRouteTableConflict:
-		if i.ConflictsWith != "" {
-			return fmt.Sprintf("%s (VRFRouteTableConflict network=%q table=%d: route table %d is also claimed by VRF Network %q on an overlapping set of nodes, which can result in network outages; give each VRF Network a unique routeTableIndex)", i.NAD.String(), i.Network, i.RouteTable, i.RouteTable, i.ConflictsWith)
-		}
-		return fmt.Sprintf("%s (VRFRouteTableConflict network=%q table=%d: route table %d falls inside the FelixConfiguration routeTableRanges, which Calico reserves for its own routes; choose a routeTableIndex outside those ranges)", i.NAD.String(), i.Network, i.RouteTable, i.RouteTable)
-	case planbase.CalicoIssueVRFRouteTablePossibleConflict:
-		return fmt.Sprintf("%s (VRFRouteTablePossibleConflict network=%q table=%d: VRF Network %q also uses route table %d; both entries are node-scoped, so the overlap cannot be ruled out — verify the two selectors never match the same node, or give each network a unique routeTableIndex)", i.NAD.String(), i.Network, i.RouteTable, i.ConflictsWith, i.RouteTable)
-	case planbase.CalicoIssueVRFDataplaneNotNftables:
-		return fmt.Sprintf("%s (VRFDataplaneNotNftables: VRF networking requires the nftables dataplane; set nftablesMode: Enabled (and leave bpfEnabled off) in the default FelixConfiguration)", i.NAD.String())
-	case planbase.CalicoIssueVRFPoolNotPinned:
-		return fmt.Sprintf("%s (VRFPoolNotPinned network=%q: the NAD does not pin an IPPool, so each VM's address will come from whichever pool Calico's IPAM selects and the VRF's network may not be able to route it; pin the VRF's IPPool via ipv4_pools in the NAD's IPAM config)", i.NAD.String(), i.Network)
-	case planbase.CalicoIssueVRFNoBGPPeer:
-		return fmt.Sprintf("%s (VRFNoBGPPeer network=%q: cross-node reachability in this VRF requires a BGPPeer whose spec.network names it; VMs placed on different nodes will not reach each other until one exists)", i.NAD.String(), i.Network)
-	case planbase.CalicoIssueVRFNoHostInterfaces:
-		return fmt.Sprintf("%s (VRFNoHostInterfaces network=%q: a hostConfig entry names no hostInterfaces, so VMs on the nodes that entry matches are unreachable beyond their own node; name at least one host interface in every hostConfig entry)", i.NAD.String(), i.Network)
-	case planbase.CalicoIssueDataplaneNotBPF:
-		return fmt.Sprintf("%s (DataplaneNotBPF: the destination Calico install is not running the BPF dataplane; L2 networks require FelixConfiguration bpfEnabled: true)", i.NAD.String())
-	case planbase.CalicoIssueNetworkHasNoL2Bridge:
-		return fmt.Sprintf("%s (NetworkHasNoL2Bridge network=%q)", i.NAD.String(), i.Network)
-	case planbase.CalicoIssueNetworkHasNoVLANs:
-		return fmt.Sprintf("%s (NetworkHasNoVLANs network=%q)", i.NAD.String(), i.Network)
-	case planbase.CalicoIssueVLANNotInNetwork:
-		return fmt.Sprintf("%s (VLANNotInNetwork network=%q vlan=%d)", i.NAD.String(), i.Network, i.VLAN)
-	case planbase.CalicoIssueVLANRequired:
-		return fmt.Sprintf("%s (VLANRequired network=%q: the NAD references a Calico Network but names no VLAN; an explicit VLAN is required)", i.NAD.String(), i.Network)
-	case planbase.CalicoIssueVLANHasNoIPPool:
-		return fmt.Sprintf("%s (VLANHasNoIPPool network=%q vlan=%d)", i.NAD.String(), i.Network, i.VLAN)
-	case planbase.CalicoIssueNADMissingNetwork:
-		return fmt.Sprintf("%s (NADMissingNetwork: type=calico without 'network' field; MAC/IP preservation not applied)", i.NAD.String())
-	}
-	return fmt.Sprintf("%s (%s)", i.NAD.String(), i.Kind)
 }
 
 func missingStaticIPsMessage(plan *api.Plan) string {

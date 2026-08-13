@@ -32,6 +32,55 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 )
 
+// validateCalicoNADsForTest adapts the old Validator-method call shape to the
+// shared map-scoped function, mirroring how the controllers invoke it.
+func validateCalicoNADsForTest(v *Validator, c client.Client) (planbase.CalicoValidationResult, error) {
+	var pairs []v1beta1.NetworkPair
+	if v.Plan.Referenced.Map.Network != nil {
+		pairs = v.Plan.Referenced.Map.Network.Spec.Map
+	}
+	result, err := planbase.ValidateCalicoNADs(context.TODO(), c, pairs, v.Log)
+	if err != nil {
+		return result, err
+	}
+	// Fold in the plan-scoped issues the way the Plan controller does, so
+	// the specs assert the combined semantics.
+	planHasPlacement := len(v.Plan.Spec.TargetNodeSelector) > 0 || v.Plan.Spec.TargetAffinity != nil
+	criticals, warnings := planbase.CalicoNADPlanIssues(result.Cache, v.Plan.Spec.PreserveStaticIPs, planHasPlacement)
+	result.Issues = append(result.Issues, criticals...)
+	result.Warnings = append(result.Warnings, warnings...)
+	return result, nil
+}
+
+// validateCalicoPrimaryForTest adapts the old Validator-method call shape to
+// the shared map-scoped function.
+func validateCalicoPrimaryForTest(v *Validator, c client.Client) (planbase.CalicoPrimaryValidationResult, error) {
+	var pairs []v1beta1.NetworkPair
+	if v.Plan.Referenced.Map.Network != nil {
+		pairs = v.Plan.Referenced.Map.Network.Spec.Map
+	}
+	result, err := planbase.ValidateCalicoPrimary(context.TODO(), c, pairs, v.Log)
+	if err != nil {
+		return result, err
+	}
+	// Fold in the plan-scoped issues the way the Plan controller does.
+	if planbase.HasCalicoPodEntry(pairs) && !v.Plan.Spec.PreserveStaticIPs {
+		result.Warnings = append(result.Warnings, planbase.CalicoPrimaryIssue{
+			Kind: planbase.CalicoIssuePrimaryStaticIPsNotPreserved,
+		})
+	}
+	if result.Cache != nil && result.Cache.Primary != nil && v.Plan.DestinationHasUdnNetwork(c) {
+		primary := result.Cache.Primary
+		result.Issues = append(result.Issues, planbase.CalicoPrimaryIssue{
+			Kind:    planbase.CalicoIssuePrimaryConflictsWithUDN,
+			Network: primary.Network,
+			VLAN:    primary.VLAN.VID,
+		})
+		result.Cache.Primary = nil
+	}
+	return result, nil
+}
+
 var ErrNotImplemented = errors.New("not implemented")
 
 // makeFelixConfiguration builds the cluster-wide "default" FelixConfiguration
@@ -861,7 +910,7 @@ var _ = Describe("vsphere validation tests", func() {
 			It("returns empty results when NetworkMap is nil", func() {
 				v, c, _ := setup("10.100.0.5", true)
 				v.Plan.Referenced.Map.Network = nil
-				result, err := v.ValidateCalicoNADs(c)
+				result, err := validateCalicoNADsForTest(v, c)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(result.Issues).To(BeEmpty())
 				Expect(result.Cache).NotTo(BeNil())
@@ -873,7 +922,7 @@ var _ = Describe("vsphere validation tests", func() {
 					makeCalicoNAD(100), makeNetwork(l2Single),
 					makeIPPool("vlan100-pool", "10.100.0.0/24", "L2Workload"),
 				)
-				result, err := v.ValidateCalicoNADs(c)
+				result, err := validateCalicoNADsForTest(v, c)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(result.Issues).To(BeEmpty())
 				Expect(result.Cache.NADs).To(HaveLen(1))
@@ -908,7 +957,7 @@ var _ = Describe("vsphere validation tests", func() {
 							return inner.Get(ctx, key, obj, opts...)
 						},
 					}).Build()
-				result, err := v.ValidateCalicoNADs(c)
+				result, err := validateCalicoNADsForTest(v, c)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(result.Issues).To(ConsistOf(planbase.CalicoNADIssue{
 					NAD:     k8stypes.NamespacedName{Namespace: nadNS, Name: nadName},
@@ -921,7 +970,7 @@ var _ = Describe("vsphere validation tests", func() {
 
 			It("emits NetworkNotFound when the referenced Network is missing", func() {
 				v, c, _ := setup("10.100.0.5", true, makeCalicoNAD(100))
-				result, err := v.ValidateCalicoNADs(c)
+				result, err := validateCalicoNADsForTest(v, c)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(result.Issues).To(ConsistOf(planbase.CalicoNADIssue{
 					NAD:     k8stypes.NamespacedName{Namespace: nadNS, Name: nadName},
@@ -936,7 +985,7 @@ var _ = Describe("vsphere validation tests", func() {
 				v, c, _ := setup("10.100.0.5", true,
 					makeCalicoNAD(100), makeNetwork(map[string]interface{}{}),
 				)
-				result, err := v.ValidateCalicoNADs(c)
+				result, err := validateCalicoNADsForTest(v, c)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(nadIssueKinds(result.Issues)).To(ConsistOf(planbase.CalicoIssueNetworkHasNoL2Bridge))
 				Expect(result.Cache.NADs).To(BeEmpty())
@@ -949,7 +998,7 @@ var _ = Describe("vsphere validation tests", func() {
 				v, c, _ := setup("10.100.0.5", true,
 					makeCalicoNAD(0), makeNetwork(l2Multi),
 				)
-				result, err := v.ValidateCalicoNADs(c)
+				result, err := validateCalicoNADsForTest(v, c)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(nadIssueKinds(result.Issues)).To(ConsistOf(planbase.CalicoIssueVLANRequired))
 			})
@@ -960,7 +1009,7 @@ var _ = Describe("vsphere validation tests", func() {
 				// asking for a vlan first would send the user chasing the
 				// wrong fix.
 				v, c, _ := setup("10.100.0.5", true, makeCalicoNAD(0))
-				result, err := v.ValidateCalicoNADs(c)
+				result, err := validateCalicoNADsForTest(v, c)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(nadIssueKinds(result.Issues)).To(ConsistOf(planbase.CalicoIssueNetworkNotFound))
 			})
@@ -982,7 +1031,7 @@ var _ = Describe("vsphere validation tests", func() {
 					makeNftablesFelixConfiguration("Enabled"),
 					makeBGPPeer("vrf-peer", netName),
 				)
-				result, err := v.ValidateCalicoNADs(c)
+				result, err := validateCalicoNADsForTest(v, c)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(result.Issues).To(BeEmpty())
 				Expect(result.Warnings).To(BeEmpty())
@@ -1004,7 +1053,7 @@ var _ = Describe("vsphere validation tests", func() {
 					makeNftablesFelixConfiguration("Enabled"),
 					makeBGPPeer("vrf-peer", netName),
 				)
-				result, err := v.ValidateCalicoNADs(c)
+				result, err := validateCalicoNADsForTest(v, c)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(result.Issues).To(BeEmpty())
 				Expect(result.Warnings).To(ConsistOf(planbase.CalicoNADIssue{
@@ -1046,7 +1095,7 @@ var _ = Describe("vsphere validation tests", func() {
 						makeNftablesFelixConfiguration("Enabled"),
 						makeBGPPeer("vrf-peer", netName),
 					)
-					result, err := v.ValidateCalicoNADs(c)
+					result, err := validateCalicoNADsForTest(v, c)
 					Expect(err).NotTo(HaveOccurred())
 					Expect(result.Issues).To(BeEmpty())
 					Expect(result.Warnings).To(ConsistOf(planbase.CalicoNADIssue{
@@ -1071,7 +1120,7 @@ var _ = Describe("vsphere validation tests", func() {
 						makeNftablesFelixConfiguration("Enabled"),
 						makeBGPPeer("vrf-peer", netName),
 					)
-					result, err := v.ValidateCalicoNADs(c)
+					result, err := validateCalicoNADsForTest(v, c)
 					Expect(err).NotTo(HaveOccurred())
 					Expect(result.Issues).To(BeEmpty())
 					Expect(result.Warnings).To(BeEmpty())
@@ -1087,7 +1136,7 @@ var _ = Describe("vsphere validation tests", func() {
 						makeNftablesFelixConfiguration("Enabled"),
 						makeBGPPeer("vrf-peer", netName),
 					)
-					result, err := v.ValidateCalicoNADs(c)
+					result, err := validateCalicoNADsForTest(v, c)
 					Expect(err).NotTo(HaveOccurred())
 					Expect(result.Issues).To(BeEmpty())
 					Expect(result.Warnings).To(BeEmpty())
@@ -1119,7 +1168,7 @@ var _ = Describe("vsphere validation tests", func() {
 							},
 						},
 					)
-					result, err := v.ValidateCalicoNADs(c)
+					result, err := validateCalicoNADsForTest(v, c)
 					Expect(err).NotTo(HaveOccurred())
 					Expect(result.Issues).To(BeEmpty())
 					Expect(result.Warnings).To(ConsistOf(
@@ -1156,7 +1205,7 @@ var _ = Describe("vsphere validation tests", func() {
 						makeNftablesFelixConfiguration("Enabled"),
 						makeBGPPeer("vrf-peer", netName),
 					)
-					result, err := v.ValidateCalicoNADs(c)
+					result, err := validateCalicoNADsForTest(v, c)
 					Expect(err).NotTo(HaveOccurred())
 					Expect(result.Warnings).To(BeEmpty())
 					Expect(result.Issues).To(ConsistOf(planbase.CalicoNADIssue{
@@ -1181,7 +1230,7 @@ var _ = Describe("vsphere validation tests", func() {
 						makeBGPPeer("vrf-peer", netName),
 					)
 					v.Plan.Spec.TargetNodeSelector = map[string]string{"rack": "a"}
-					result, err := v.ValidateCalicoNADs(c)
+					result, err := validateCalicoNADsForTest(v, c)
 					Expect(err).NotTo(HaveOccurred())
 					Expect(result.Issues).To(BeEmpty())
 					Expect(result.Warnings).To(ConsistOf(planbase.CalicoNADIssue{
@@ -1217,7 +1266,7 @@ var _ = Describe("vsphere validation tests", func() {
 							},
 						},
 					)
-					result, err := v.ValidateCalicoNADs(c)
+					result, err := validateCalicoNADsForTest(v, c)
 					Expect(err).NotTo(HaveOccurred())
 					Expect(result.Warnings).To(BeEmpty())
 					Expect(nadIssueKinds(result.Issues)).To(ConsistOf(planbase.CalicoIssueVRFNodeScoped))
@@ -1234,7 +1283,7 @@ var _ = Describe("vsphere validation tests", func() {
 						makeNftablesFelixConfiguration("Enabled"),
 						makeBGPPeer("vrf-peer", netName),
 					)
-					result, err := v.ValidateCalicoNADs(c)
+					result, err := validateCalicoNADsForTest(v, c)
 					Expect(err).NotTo(HaveOccurred())
 					Expect(result.Issues).To(ConsistOf(planbase.CalicoNADIssue{
 						NAD:        nadKey,
@@ -1258,7 +1307,7 @@ var _ = Describe("vsphere validation tests", func() {
 						makeNftablesFelixConfiguration("Enabled"),
 						makeBGPPeer("vrf-peer", netName),
 					)
-					result, err := v.ValidateCalicoNADs(c)
+					result, err := validateCalicoNADsForTest(v, c)
 					Expect(err).NotTo(HaveOccurred())
 					Expect(result.Issues).To(ConsistOf(planbase.CalicoNADIssue{
 						NAD:           nadKey,
@@ -1287,7 +1336,7 @@ var _ = Describe("vsphere validation tests", func() {
 						makeNftablesFelixConfiguration("Enabled"),
 						makeBGPPeer("vrf-peer", netName),
 					)
-					result, err := v.ValidateCalicoNADs(c)
+					result, err := validateCalicoNADsForTest(v, c)
 					Expect(err).NotTo(HaveOccurred())
 					Expect(result.Issues).To(BeEmpty())
 					Expect(result.Warnings).To(ConsistOf(planbase.CalicoNADIssue{
@@ -1312,7 +1361,7 @@ var _ = Describe("vsphere validation tests", func() {
 						makeNftablesFelixConfiguration("Enabled"),
 						makeBGPPeer("vrf-peer", netName),
 					)
-					result, err := v.ValidateCalicoNADs(c)
+					result, err := validateCalicoNADsForTest(v, c)
 					Expect(err).NotTo(HaveOccurred())
 					Expect(result.Issues).To(BeEmpty())
 					Expect(result.Warnings).To(BeEmpty())
@@ -1327,7 +1376,7 @@ var _ = Describe("vsphere validation tests", func() {
 						felix,
 						makeBGPPeer("vrf-peer", netName),
 					)
-					result, err := v.ValidateCalicoNADs(c)
+					result, err := validateCalicoNADsForTest(v, c)
 					Expect(err).NotTo(HaveOccurred())
 					// ConflictsWith stays empty: the collision is with the
 					// FelixConfiguration, not another Network.
@@ -1352,7 +1401,7 @@ var _ = Describe("vsphere validation tests", func() {
 						makeNftablesFelixConfiguration("Enabled"),
 						makeBGPPeer("vrf-peer", netName),
 					)
-					result, err := v.ValidateCalicoNADs(c)
+					result, err := validateCalicoNADsForTest(v, c)
 					Expect(err).NotTo(HaveOccurred())
 					Expect(result.Issues).To(BeEmpty())
 					Expect(result.Warnings).To(BeEmpty())
@@ -1370,7 +1419,7 @@ var _ = Describe("vsphere validation tests", func() {
 						makeIPPool("default-pool", "10.100.0.0/24", "Workload"),
 						makeNftablesFelixConfiguration("Enabled"),
 					)
-					result, err := v.ValidateCalicoNADs(c)
+					result, err := validateCalicoNADsForTest(v, c)
 					Expect(err).NotTo(HaveOccurred())
 					Expect(result.Issues).To(BeEmpty())
 					Expect(result.Warnings).To(ConsistOf(planbase.CalicoNADIssue{
@@ -1392,7 +1441,7 @@ var _ = Describe("vsphere validation tests", func() {
 						makeNftablesFelixConfiguration("Enabled"),
 						makeBGPPeer("other-peer", "other-vrf"),
 					)
-					result, err := v.ValidateCalicoNADs(c)
+					result, err := validateCalicoNADsForTest(v, c)
 					Expect(err).NotTo(HaveOccurred())
 					Expect(result.Issues).To(BeEmpty())
 					Expect(result.Warnings).To(ConsistOf(planbase.CalicoNADIssue{
@@ -1435,7 +1484,7 @@ var _ = Describe("vsphere validation tests", func() {
 								return inner.List(ctx, list, opts...)
 							},
 						}).Build()
-					result, err := v.ValidateCalicoNADs(c)
+					result, err := validateCalicoNADsForTest(v, c)
 					Expect(err).NotTo(HaveOccurred())
 					Expect(result.Issues).To(BeEmpty())
 					Expect(result.Warnings).To(ConsistOf(planbase.CalicoNADIssue{
@@ -1462,7 +1511,7 @@ var _ = Describe("vsphere validation tests", func() {
 						makeNftablesFelixConfiguration("Enabled"),
 						makeBGPPeer("vrf-peer", netName),
 					)
-					result, err := v.ValidateCalicoNADs(c)
+					result, err := validateCalicoNADsForTest(v, c)
 					Expect(err).NotTo(HaveOccurred())
 					Expect(result.Issues).To(BeEmpty())
 					Expect(result.Warnings).To(ConsistOf(planbase.CalicoNADIssue{
@@ -1492,7 +1541,7 @@ var _ = Describe("vsphere validation tests", func() {
 							felix = perNode
 						}
 						v, c, _ := setup("10.100.0.5", true, append(objs, felix)...)
-						result, err := v.ValidateCalicoNADs(c)
+						result, err := validateCalicoNADsForTest(v, c)
 						Expect(err).NotTo(HaveOccurred())
 						Expect(nadIssueKinds(result.Issues)).To(ConsistOf(planbase.CalicoIssueVRFDataplaneNotNftables))
 						// The finding is cluster-scoped; the NAD itself is
@@ -1549,7 +1598,7 @@ var _ = Describe("vsphere validation tests", func() {
 				It("reports only VRFDataplaneNotNftables on a BPF cluster", func() {
 					// BPF satisfies the l2Bridge side and fails the VRF side.
 					v, c := mixedSetup(makeFelixConfiguration(true))
-					result, err := v.ValidateCalicoNADs(c)
+					result, err := validateCalicoNADsForTest(v, c)
 					Expect(err).NotTo(HaveOccurred())
 					Expect(nadIssueKinds(result.Issues)).To(ConsistOf(planbase.CalicoIssueVRFDataplaneNotNftables))
 					Expect(result.Cache.NADs).To(HaveLen(2))
@@ -1559,7 +1608,7 @@ var _ = Describe("vsphere validation tests", func() {
 					// nftables satisfies the VRF side and fails the l2Bridge
 					// side.
 					v, c := mixedSetup(makeNftablesFelixConfiguration("Enabled"))
-					result, err := v.ValidateCalicoNADs(c)
+					result, err := validateCalicoNADsForTest(v, c)
 					Expect(err).NotTo(HaveOccurred())
 					Expect(nadIssueKinds(result.Issues)).To(ConsistOf(planbase.CalicoIssueDataplaneNotBPF))
 					Expect(result.Cache.NADs).To(HaveLen(2))
@@ -1570,7 +1619,7 @@ var _ = Describe("vsphere validation tests", func() {
 					// unset) can honour neither network type; both sides
 					// report, each naming its own remedy.
 					v, c := mixedSetup(makeFelixConfiguration(false))
-					result, err := v.ValidateCalicoNADs(c)
+					result, err := validateCalicoNADsForTest(v, c)
 					Expect(err).NotTo(HaveOccurred())
 					Expect(nadIssueKinds(result.Issues)).To(ConsistOf(
 						planbase.CalicoIssueDataplaneNotBPF,
@@ -1586,7 +1635,7 @@ var _ = Describe("vsphere validation tests", func() {
 					makeIPPool("vlan100-pool", "10.100.0.0/24", "L2Workload"),
 					makeFelixConfiguration(true),
 				)
-				result, err := v.ValidateCalicoNADs(c)
+				result, err := validateCalicoNADsForTest(v, c)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(result.Issues).To(BeEmpty())
 				Expect(result.Cache.NADs).To(HaveLen(1))
@@ -1598,7 +1647,7 @@ var _ = Describe("vsphere validation tests", func() {
 					makeIPPool("vlan100-pool", "10.100.0.0/24", "L2Workload"),
 					makeFelixConfiguration(false),
 				)
-				result, err := v.ValidateCalicoNADs(c)
+				result, err := validateCalicoNADsForTest(v, c)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(nadIssueKinds(result.Issues)).To(ConsistOf(planbase.CalicoIssueDataplaneNotBPF))
 				// The issue is plan-scoped; the NAD's own configuration is
@@ -1617,7 +1666,7 @@ var _ = Describe("vsphere validation tests", func() {
 					makeIPPool("vlan100-pool", "10.100.0.0/24", "L2Workload"),
 					perNode,
 				)
-				result, err := v.ValidateCalicoNADs(c)
+				result, err := validateCalicoNADsForTest(v, c)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(nadIssueKinds(result.Issues)).To(ConsistOf(planbase.CalicoIssueDataplaneNotBPF))
 			})
@@ -1645,7 +1694,7 @@ var _ = Describe("vsphere validation tests", func() {
 						},
 					},
 				)
-				result, err := v.ValidateCalicoNADs(c)
+				result, err := validateCalicoNADsForTest(v, c)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(nadIssueKinds(result.Issues)).To(ConsistOf(planbase.CalicoIssueDataplaneNotBPF))
 				Expect(result.Cache.NADs).To(HaveLen(2))
@@ -1662,7 +1711,7 @@ var _ = Describe("vsphere validation tests", func() {
 				v, c, _ := setup("10.100.0.5", true,
 					makeCalicoNAD(100), makeNetwork(emptyVLANs),
 				)
-				result, err := v.ValidateCalicoNADs(c)
+				result, err := validateCalicoNADsForTest(v, c)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(nadIssueKinds(result.Issues)).To(ConsistOf(planbase.CalicoIssueNetworkHasNoVLANs))
 			})
@@ -1671,7 +1720,7 @@ var _ = Describe("vsphere validation tests", func() {
 				v, c, _ := setup("10.100.0.5", true,
 					makeCalicoNAD(999), makeNetwork(l2Single),
 				)
-				result, err := v.ValidateCalicoNADs(c)
+				result, err := validateCalicoNADsForTest(v, c)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(nadIssueKinds(result.Issues)).To(ConsistOf(planbase.CalicoIssueVLANNotInNetwork))
 			})
@@ -1681,7 +1730,7 @@ var _ = Describe("vsphere validation tests", func() {
 					makeCalicoNAD(100), makeNetwork(l2Single),
 					makeIPPool("cluster-default", "10.0.0.0/8", "L2Workload"), // pool too large
 				)
-				result, err := v.ValidateCalicoNADs(c)
+				result, err := validateCalicoNADsForTest(v, c)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(nadIssueKinds(result.Issues)).To(ConsistOf(planbase.CalicoIssueVLANHasNoIPPool))
 			})
@@ -1693,7 +1742,7 @@ var _ = Describe("vsphere validation tests", func() {
 					makeCalicoNAD(100), makeNetwork(l2Single),
 					makeDisabledIPPool("vlan100-disabled", "10.100.0.0/24", "L2Workload"),
 				)
-				result, err := v.ValidateCalicoNADs(c)
+				result, err := validateCalicoNADsForTest(v, c)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(nadIssueKinds(result.Issues)).To(ConsistOf(planbase.CalicoIssueVLANHasNoIPPool))
 			})
@@ -1706,7 +1755,7 @@ var _ = Describe("vsphere validation tests", func() {
 					makeCalicoNAD(100), makeNetwork(l2Single),
 					makeIPPool("vlan100-workload-only", "10.100.0.0/24", "Workload"),
 				)
-				result, err := v.ValidateCalicoNADs(c)
+				result, err := validateCalicoNADsForTest(v, c)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(nadIssueKinds(result.Issues)).To(ConsistOf(planbase.CalicoIssueVLANHasNoIPPool))
 			})
@@ -1725,7 +1774,7 @@ var _ = Describe("vsphere validation tests", func() {
 						},
 					},
 				)
-				result, err := v.ValidateCalicoNADs(c)
+				result, err := validateCalicoNADsForTest(v, c)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(result.Issues).To(HaveLen(1))
 				Expect(result.Issues[0].Kind).To(Equal(planbase.CalicoIssueNetworkNotFound))
@@ -1737,7 +1786,7 @@ var _ = Describe("vsphere validation tests", func() {
 				// the NotFound — it should soft-fail and surface a NADUnreadable
 				// issue so the plan validation pass can complete.
 				v, c, _ := setup("10.100.0.5", true) // no NAD in the client
-				result, err := v.ValidateCalicoNADs(c)
+				result, err := validateCalicoNADsForTest(v, c)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(result.Issues).To(ConsistOf(planbase.CalicoNADIssue{
 					NAD:  k8stypes.NamespacedName{Namespace: nadNS, Name: nadName},
@@ -1752,7 +1801,7 @@ var _ = Describe("vsphere validation tests", func() {
 					Spec:       k8snet.NetworkAttachmentDefinitionSpec{Config: `{not-valid-json`},
 				}
 				v, c, _ := setup("10.100.0.5", true, badNAD)
-				result, err := v.ValidateCalicoNADs(c)
+				result, err := validateCalicoNADsForTest(v, c)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(result.Issues).To(ConsistOf(planbase.CalicoNADIssue{
 					NAD:  k8stypes.NamespacedName{Namespace: nadNS, Name: nadName},
@@ -1772,7 +1821,7 @@ var _ = Describe("vsphere validation tests", func() {
 				}
 				v, c, _ := setup("10.100.0.5", true, ovnNAD)
 				v.Plan.Referenced.Map.Network.Spec.Map[0].Destination.Name = "ovn-nad"
-				result, err := v.ValidateCalicoNADs(c)
+				result, err := validateCalicoNADsForTest(v, c)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(result.Issues).To(BeEmpty())
 				Expect(result.Cache.NADs).To(BeEmpty())
@@ -1789,7 +1838,7 @@ var _ = Describe("vsphere validation tests", func() {
 					Spec:       k8snet.NetworkAttachmentDefinitionSpec{Config: `{"type":"calico"}`},
 				}
 				v, c, _ := setup("10.100.0.5", true, l3NAD)
-				result, err := v.ValidateCalicoNADs(c)
+				result, err := validateCalicoNADsForTest(v, c)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(result.Issues).To(BeEmpty())
 				Expect(result.Warnings).To(ConsistOf(planbase.CalicoNADIssue{
@@ -1826,7 +1875,7 @@ var _ = Describe("vsphere validation tests", func() {
 						},
 					},
 				)
-				result, err := v.ValidateCalicoNADs(c)
+				result, err := validateCalicoNADsForTest(v, c)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(result.Issues).To(ConsistOf(planbase.CalicoNADIssue{
 					NAD:     k8stypes.NamespacedName{Namespace: nadNS, Name: nadName},
@@ -1897,7 +1946,7 @@ var _ = Describe("vsphere validation tests", func() {
 				inv.vm.NICs = append(inv.vm.NICs, vsphere.NIC{Network: vsphere.Ref{ID: healthySrcID}, DeviceKey: 4002})
 				inv.vm.GuestNetworks = append(inv.vm.GuestNetworks, vsphere.GuestNetwork{IP: "192.168.1.5", DeviceConfigId: 4002})
 
-				result, err := v.ValidateCalicoNADs(c)
+				result, err := validateCalicoNADsForTest(v, c)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(result.Issues).To(HaveLen(1))
 				Expect(result.Issues[0].NAD).To(Equal(k8stypes.NamespacedName{Namespace: nadNS, Name: nadName}))
@@ -1925,7 +1974,7 @@ var _ = Describe("vsphere validation tests", func() {
 					makeCalicoNAD(100), makeNetwork(l2Single),
 					makeIPPool("vlan100-pool", "10.100.0.0/24", "L2Workload"),
 				)
-				result, err := v.ValidateCalicoNADs(c)
+				result, err := validateCalicoNADsForTest(v, c)
 				Expect(err).NotTo(HaveOccurred())
 				issues, err := v.CalicoVMIssues(vmRef, result.Cache)
 				Expect(err).NotTo(HaveOccurred())
@@ -1939,7 +1988,7 @@ var _ = Describe("vsphere validation tests", func() {
 					makeCalicoNAD(100), makeNetwork(l2Single),
 					makeIPPool("vlan100-upper", "10.100.0.128/25", "L2Workload"), // covers VLAN but not 10.100.0.5
 				)
-				result, err := v.ValidateCalicoNADs(c)
+				result, err := validateCalicoNADsForTest(v, c)
 				Expect(err).NotTo(HaveOccurred())
 				issues, err := v.CalicoVMIssues(vmRef, result.Cache)
 				Expect(err).NotTo(HaveOccurred())
@@ -1954,7 +2003,7 @@ var _ = Describe("vsphere validation tests", func() {
 					makeCalicoNAD(100), makeNetwork(l2Single),
 					makeIPPool("vlan100-pool", "10.100.0.0/24", "L2Workload"),
 				)
-				result, err := v.ValidateCalicoNADs(c)
+				result, err := validateCalicoNADsForTest(v, c)
 				Expect(err).NotTo(HaveOccurred())
 				issues, err := v.CalicoVMIssues(vmRef, result.Cache)
 				Expect(err).NotTo(HaveOccurred())
@@ -1967,7 +2016,7 @@ var _ = Describe("vsphere validation tests", func() {
 				// issues for that NAD — the failure is already reported at plan
 				// level.
 				v, c, vmRef := setup("10.100.0.5", true, makeCalicoNAD(100))
-				result, err := v.ValidateCalicoNADs(c)
+				result, err := validateCalicoNADsForTest(v, c)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(result.Cache.NADs).To(BeEmpty())
 				issues, err := v.CalicoVMIssues(vmRef, result.Cache)
@@ -1986,7 +2035,7 @@ var _ = Describe("vsphere validation tests", func() {
 				vm.GuestNetworks = append(vm.GuestNetworks, vsphere.GuestNetwork{IP: "10.100.0.6", DeviceConfigId: 4001})
 				v.Source.Inventory.(*mockInventory).vm = vm
 
-				result, err := v.ValidateCalicoNADs(c)
+				result, err := validateCalicoNADsForTest(v, c)
 				Expect(err).NotTo(HaveOccurred())
 				issues, err := v.CalicoVMIssues(vmRef, result.Cache)
 				Expect(err).NotTo(HaveOccurred())
@@ -2003,7 +2052,7 @@ var _ = Describe("vsphere validation tests", func() {
 					makeIPPool("other-pool", "10.200.0.0/24", "Workload"),
 					makeNftablesFelixConfiguration("Enabled"),
 				)
-				result, err := v.ValidateCalicoNADs(c)
+				result, err := validateCalicoNADsForTest(v, c)
 				Expect(err).NotTo(HaveOccurred())
 				issues, err := v.CalicoVMIssues(vmRef, result.Cache)
 				Expect(err).NotTo(HaveOccurred())
@@ -2024,7 +2073,7 @@ var _ = Describe("vsphere validation tests", func() {
 				vm.GuestNetworks = append(vm.GuestNetworks, vsphere.GuestNetwork{IP: "10.100.0.6", DeviceConfigId: 4001})
 				v.Source.Inventory.(*mockInventory).vm = vm
 
-				result, err := v.ValidateCalicoNADs(c)
+				result, err := validateCalicoNADsForTest(v, c)
 				Expect(err).NotTo(HaveOccurred())
 				issues, err := v.CalicoVMIssues(vmRef, result.Cache)
 				Expect(err).NotTo(HaveOccurred())
@@ -2039,7 +2088,7 @@ var _ = Describe("vsphere validation tests", func() {
 					makeIPPool("other-pool", "10.200.0.0/24", "Workload"),
 					makeNftablesFelixConfiguration("Enabled"),
 				)
-				result, err := v.ValidateCalicoNADs(c)
+				result, err := validateCalicoNADsForTest(v, c)
 				Expect(err).NotTo(HaveOccurred())
 				issues, err := v.CalicoVMIssues(vmRef, result.Cache)
 				Expect(err).NotTo(HaveOccurred())
@@ -2081,7 +2130,7 @@ var _ = Describe("vsphere validation tests", func() {
 					}},
 				}
 
-				result, err := v.ValidateCalicoNADs(c)
+				result, err := validateCalicoNADsForTest(v, c)
 				Expect(err).NotTo(HaveOccurred())
 				issues, err := v.CalicoVMIssues(vmRef, result.Cache)
 				Expect(err).NotTo(HaveOccurred())
@@ -2222,7 +2271,7 @@ var _ = Describe("vsphere validation tests", func() {
 			It("returns empty results when NetworkMap is nil", func() {
 				v, c, _ := setupPrimary("10.100.0.5", false, v1beta1.DestinationNetwork{Type: planbase.Pod, Calico: &v1beta1.CalicoDestination{}}, nil, true)
 				v.Plan.Referenced.Map.Network = nil
-				result, err := v.ValidateCalicoPrimary(c)
+				result, err := validateCalicoPrimaryForTest(v, c)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(result.Issues).To(BeEmpty())
 				Expect(result.Cache).NotTo(BeNil())
@@ -2232,7 +2281,7 @@ var _ = Describe("vsphere validation tests", func() {
 			It("returns empty results when NetworkMap has no calico entries", func() {
 				dest := v1beta1.DestinationNetwork{Type: planbase.Pod}
 				v, c, _ := setupPrimary("10.100.0.5", false, dest, nil, true)
-				result, err := v.ValidateCalicoPrimary(c)
+				result, err := validateCalicoPrimaryForTest(v, c)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(result.Issues).To(BeEmpty())
 				Expect(result.Cache.Primary).To(BeNil())
@@ -2243,7 +2292,7 @@ var _ = Describe("vsphere validation tests", func() {
 				v, c, _ := setupPrimary("10.244.0.5", false, dest, nil, true,
 					makeIPPool("default-ipv4-ippool", "10.244.0.0/16"),
 				)
-				result, err := v.ValidateCalicoPrimary(c)
+				result, err := validateCalicoPrimaryForTest(v, c)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(result.Issues).To(BeEmpty())
 				Expect(result.Cache.Primary).NotTo(BeNil())
@@ -2257,7 +2306,7 @@ var _ = Describe("vsphere validation tests", func() {
 					makeNetwork(l2Single),
 					makeIPPool("vlan100-pool", "10.100.0.0/24", "L2Workload"),
 				)
-				result, err := v.ValidateCalicoPrimary(c)
+				result, err := validateCalicoPrimaryForTest(v, c)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(result.Issues).To(BeEmpty())
 				Expect(result.Cache.Primary).NotTo(BeNil())
@@ -2272,7 +2321,7 @@ var _ = Describe("vsphere validation tests", func() {
 					makeNetwork(l2Multi),
 					makeIPPool("vlan200-pool", "10.200.0.0/24", "L2Workload"),
 				)
-				result, err := v.ValidateCalicoPrimary(c)
+				result, err := validateCalicoPrimaryForTest(v, c)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(result.Issues).To(BeEmpty())
 				Expect(result.Cache.Primary.VLAN.VID).To(Equal(uint16(200)))
@@ -2296,7 +2345,7 @@ var _ = Describe("vsphere validation tests", func() {
 							return nil
 						},
 					}).Build()
-				result, err := v.ValidateCalicoPrimary(c)
+				result, err := validateCalicoPrimaryForTest(v, c)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(kinds(result.Issues)).To(ConsistOf(planbase.CalicoIssuePrimaryUnsupported))
 				Expect(result.Cache.Primary).To(BeNil())
@@ -2314,7 +2363,7 @@ var _ = Describe("vsphere validation tests", func() {
 				v, c, _ := setupPrimary("10.244.0.5", false, dest, nil, true, makeUDNNamespace(), udnNAD,
 					makeIPPool("default-ipv4-ippool", "10.244.0.0/16"),
 				)
-				result, err := v.ValidateCalicoPrimary(c)
+				result, err := validateCalicoPrimaryForTest(v, c)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(kinds(result.Issues)).To(ConsistOf(planbase.CalicoIssuePrimaryConflictsWithUDN))
 			})
@@ -2322,7 +2371,7 @@ var _ = Describe("vsphere validation tests", func() {
 			It("emits PrimaryFieldsMisplaced when the calico block is set on a non-pod entry", func() {
 				dest := v1beta1.DestinationNetwork{Type: planbase.Multus, Calico: &v1beta1.CalicoDestination{Network: "leaked"}}
 				v, c, _ := setupPrimary("10.244.0.5", false, dest, nil, true)
-				result, err := v.ValidateCalicoPrimary(c)
+				result, err := validateCalicoPrimaryForTest(v, c)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(kinds(result.Issues)).To(ConsistOf(planbase.CalicoIssuePrimaryFieldsMisplaced))
 			})
@@ -2332,7 +2381,7 @@ var _ = Describe("vsphere validation tests", func() {
 				v, c, _ := setupPrimary("10.244.0.5", false, dest, nil, true,
 					makeIPPool("default-ipv4-ippool", "10.244.0.0/16"),
 				)
-				result, err := v.ValidateCalicoPrimary(c)
+				result, err := validateCalicoPrimaryForTest(v, c)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(kinds(result.Issues)).To(ContainElement(planbase.CalicoIssuePrimaryFieldsMisplaced))
 			})
@@ -2349,7 +2398,7 @@ var _ = Describe("vsphere validation tests", func() {
 				v, c, _ := setupPrimary("10.244.0.5", false, dest, extra, true,
 					makeIPPool("default-ipv4-ippool", "10.244.0.0/16"),
 				)
-				result, err := v.ValidateCalicoPrimary(c)
+				result, err := validateCalicoPrimaryForTest(v, c)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(result.Issues).To(BeEmpty())
 				Expect(result.Cache.Primary).NotTo(BeNil())
@@ -2363,7 +2412,7 @@ var _ = Describe("vsphere validation tests", func() {
 				v, c, _ := setupPrimary("10.244.0.5", false, dest, extra, true,
 					makeIPPool("default-ipv4-ippool", "10.244.0.0/16"),
 				)
-				result, err := v.ValidateCalicoPrimary(c)
+				result, err := validateCalicoPrimaryForTest(v, c)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(kinds(result.Issues)).To(ContainElement(planbase.CalicoIssuePrimaryFieldsMisplaced))
 			})
@@ -2374,7 +2423,7 @@ var _ = Describe("vsphere validation tests", func() {
 					Calico: &v1beta1.CalicoDestination{},
 				}
 				v, c, _ := setupPrimary("10.244.0.5", false, dest, nil, true)
-				result, err := v.ValidateCalicoPrimary(c)
+				result, err := validateCalicoPrimaryForTest(v, c)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(kinds(result.Issues)).To(ConsistOf(planbase.CalicoIssuePrimaryFieldsMisplaced))
 				// A multus block never seeds the primary cache.
@@ -2384,7 +2433,7 @@ var _ = Describe("vsphere validation tests", func() {
 			It("emits PrimaryFieldsMisplaced when the calico block is set on an ignored entry", func() {
 				dest := v1beta1.DestinationNetwork{Type: planbase.Ignored, Calico: &v1beta1.CalicoDestination{}}
 				v, c, _ := setupPrimary("10.244.0.5", false, dest, nil, true)
-				result, err := v.ValidateCalicoPrimary(c)
+				result, err := validateCalicoPrimaryForTest(v, c)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(kinds(result.Issues)).To(ConsistOf(planbase.CalicoIssuePrimaryFieldsMisplaced))
 			})
@@ -2392,7 +2441,7 @@ var _ = Describe("vsphere validation tests", func() {
 			It("emits PrimaryNetworkNotFound when calico.network names a missing CR", func() {
 				dest := v1beta1.DestinationNetwork{Type: planbase.Pod, Calico: &v1beta1.CalicoDestination{Network: "missing", Vlan: 100}}
 				v, c, _ := setupPrimary("10.100.0.5", false, dest, nil, true)
-				result, err := v.ValidateCalicoPrimary(c)
+				result, err := validateCalicoPrimaryForTest(v, c)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(kinds(result.Issues)).To(ConsistOf(planbase.CalicoIssuePrimaryNetworkNotFound))
 			})
@@ -2419,7 +2468,7 @@ var _ = Describe("vsphere validation tests", func() {
 							return nil
 						},
 					}).Build()
-				result, err := v.ValidateCalicoPrimary(c)
+				result, err := validateCalicoPrimaryForTest(v, c)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(kinds(result.Issues)).To(ConsistOf(planbase.CalicoIssuePrimaryNetworkCRDAbsent))
 			})
@@ -2429,7 +2478,7 @@ var _ = Describe("vsphere validation tests", func() {
 				v, c, _ := setupPrimary("10.100.0.5", false, dest, nil, true,
 					makeNetwork(map[string]interface{}{}),
 				)
-				result, err := v.ValidateCalicoPrimary(c)
+				result, err := validateCalicoPrimaryForTest(v, c)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(kinds(result.Issues)).To(ConsistOf(planbase.CalicoIssuePrimaryNetworkHasNoL2Bridge))
 			})
@@ -2440,7 +2489,7 @@ var _ = Describe("vsphere validation tests", func() {
 				}
 				dest := v1beta1.DestinationNetwork{Type: planbase.Pod, Calico: &v1beta1.CalicoDestination{Network: netName, Vlan: 100}}
 				v, c, _ := setupPrimary("10.100.0.5", false, dest, nil, true, makeNetwork(emptyVLANs))
-				result, err := v.ValidateCalicoPrimary(c)
+				result, err := validateCalicoPrimaryForTest(v, c)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(kinds(result.Issues)).To(ConsistOf(planbase.CalicoIssuePrimaryNetworkHasNoVLANs))
 			})
@@ -2454,7 +2503,7 @@ var _ = Describe("vsphere validation tests", func() {
 					makeNetwork(l2Single),
 					makeIPPool("default-ipv4-ippool", "10.244.0.0/16"),
 				)
-				result, err := v.ValidateCalicoPrimary(c)
+				result, err := validateCalicoPrimaryForTest(v, c)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(kinds(result.Issues)).To(ConsistOf(planbase.CalicoIssuePrimaryVLANRequired))
 			})
@@ -2468,7 +2517,7 @@ var _ = Describe("vsphere validation tests", func() {
 				v, c, _ := setupPrimary("10.100.0.5", false, dest, nil, true,
 					makeIPPool("default-ipv4-ippool", "10.244.0.0/16"),
 				)
-				result, err := v.ValidateCalicoPrimary(c)
+				result, err := validateCalicoPrimaryForTest(v, c)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(kinds(result.Issues)).To(ConsistOf(planbase.CalicoIssuePrimaryNetworkNotFound))
 			})
@@ -2482,7 +2531,7 @@ var _ = Describe("vsphere validation tests", func() {
 					makeNetwork(vrfSpec),
 					makeIPPool("default-ipv4-ippool", "10.244.0.0/16"),
 				)
-				result, err := v.ValidateCalicoPrimary(c)
+				result, err := validateCalicoPrimaryForTest(v, c)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(kinds(result.Issues)).To(ConsistOf(planbase.CalicoIssuePrimaryNetworkTypeUnsupported))
 				Expect(result.Cache.Primary).To(BeNil())
@@ -2496,7 +2545,7 @@ var _ = Describe("vsphere validation tests", func() {
 					makeNetwork(vrfSpec),
 					makeIPPool("default-ipv4-ippool", "10.244.0.0/16"),
 				)
-				result, err := v.ValidateCalicoPrimary(c)
+				result, err := validateCalicoPrimaryForTest(v, c)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(kinds(result.Issues)).To(ConsistOf(planbase.CalicoIssuePrimaryNetworkTypeUnsupported))
 				Expect(result.Cache.Primary).To(BeNil())
@@ -2509,7 +2558,7 @@ var _ = Describe("vsphere validation tests", func() {
 					makeIPPool("vlan100-pool", "10.100.0.0/24", "L2Workload"),
 					makeFelixConfiguration(true),
 				)
-				result, err := v.ValidateCalicoPrimary(c)
+				result, err := validateCalicoPrimaryForTest(v, c)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(result.Issues).To(BeEmpty())
 				Expect(result.Cache.Primary).NotTo(BeNil())
@@ -2522,7 +2571,7 @@ var _ = Describe("vsphere validation tests", func() {
 					makeIPPool("vlan100-pool", "10.100.0.0/24", "L2Workload"),
 					makeFelixConfiguration(false),
 				)
-				result, err := v.ValidateCalicoPrimary(c)
+				result, err := validateCalicoPrimaryForTest(v, c)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(kinds(result.Issues)).To(ConsistOf(planbase.CalicoIssuePrimaryDataplaneNotBPF))
 				// The issue is plan-scoped; the mapping itself is valid and
@@ -2542,7 +2591,7 @@ var _ = Describe("vsphere validation tests", func() {
 					makeIPPool("vlan100-pool", "10.100.0.0/24", "L2Workload"),
 					perNode,
 				)
-				result, err := v.ValidateCalicoPrimary(c)
+				result, err := validateCalicoPrimaryForTest(v, c)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(kinds(result.Issues)).To(ConsistOf(planbase.CalicoIssuePrimaryDataplaneNotBPF))
 			})
@@ -2555,7 +2604,7 @@ var _ = Describe("vsphere validation tests", func() {
 					makeIPPool("default-ipv4-ippool", "10.244.0.0/16"),
 					makeFelixConfiguration(false),
 				)
-				result, err := v.ValidateCalicoPrimary(c)
+				result, err := validateCalicoPrimaryForTest(v, c)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(result.Issues).To(BeEmpty())
 				Expect(result.Cache.Primary).NotTo(BeNil())
@@ -2564,7 +2613,7 @@ var _ = Describe("vsphere validation tests", func() {
 			It("emits PrimaryVLANNotInNetwork when calico.vlan is absent from the Network's VLAN list", func() {
 				dest := v1beta1.DestinationNetwork{Type: planbase.Pod, Calico: &v1beta1.CalicoDestination{Network: netName, Vlan: 999}}
 				v, c, _ := setupPrimary("10.100.0.5", false, dest, nil, true, makeNetwork(l2Single))
-				result, err := v.ValidateCalicoPrimary(c)
+				result, err := validateCalicoPrimaryForTest(v, c)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(kinds(result.Issues)).To(ConsistOf(planbase.CalicoIssuePrimaryVLANNotInNetwork))
 			})
@@ -2575,7 +2624,7 @@ var _ = Describe("vsphere validation tests", func() {
 					makeNetwork(l2Single),
 					makeIPPool("workload-only", "10.100.0.0/24", "Workload"), // missing L2Workload
 				)
-				result, err := v.ValidateCalicoPrimary(c)
+				result, err := validateCalicoPrimaryForTest(v, c)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(kinds(result.Issues)).To(ConsistOf(planbase.CalicoIssuePrimaryNoEligibleIPPool))
 			})
@@ -2585,7 +2634,7 @@ var _ = Describe("vsphere validation tests", func() {
 				v, c, _ := setupPrimary("10.244.0.5", false, dest, nil, true,
 					makeIPPool("default-ipv4-ippool", "10.244.0.0/16"),
 				)
-				result, err := v.ValidateCalicoPrimary(c)
+				result, err := validateCalicoPrimaryForTest(v, c)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(kinds(result.Warnings)).To(ConsistOf(planbase.CalicoIssuePrimaryStaticIPsNotPreserved))
 				Expect(result.Issues).To(BeEmpty())
@@ -2597,7 +2646,7 @@ var _ = Describe("vsphere validation tests", func() {
 				v, c, _ := setupPrimary("10.244.0.5", true, dest, nil, true,
 					makeIPPool("default-ipv4-ippool", "10.244.0.0/16"),
 				)
-				result, err := v.ValidateCalicoPrimary(c)
+				result, err := validateCalicoPrimaryForTest(v, c)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(result.Warnings).To(BeEmpty())
 			})
@@ -2609,7 +2658,7 @@ var _ = Describe("vsphere validation tests", func() {
 				v, c, vmRef := setupPrimary("10.244.0.5", false, dest, nil, true,
 					makeIPPool("default-ipv4-ippool", "10.244.0.0/16"),
 				)
-				result, err := v.ValidateCalicoPrimary(c)
+				result, err := validateCalicoPrimaryForTest(v, c)
 				Expect(err).NotTo(HaveOccurred())
 				issues, err := v.CalicoPrimaryIssues(vmRef, result.Cache)
 				Expect(err).NotTo(HaveOccurred())
@@ -2627,7 +2676,7 @@ var _ = Describe("vsphere validation tests", func() {
 			It("returns nil when cache.Primary is nil (plan-level failed or no calico entry)", func() {
 				dest := v1beta1.DestinationNetwork{Type: planbase.Pod}
 				v, c, vmRef := setupPrimary("10.244.0.5", true, dest, nil, true)
-				result, err := v.ValidateCalicoPrimary(c)
+				result, err := validateCalicoPrimaryForTest(v, c)
 				Expect(err).NotTo(HaveOccurred())
 				issues, err := v.CalicoPrimaryIssues(vmRef, result.Cache)
 				Expect(err).NotTo(HaveOccurred())
@@ -2639,7 +2688,7 @@ var _ = Describe("vsphere validation tests", func() {
 				v, c, vmRef := setupPrimary("192.168.1.5", true, dest, nil, true,
 					makeIPPool("default-ipv4-ippool", "10.244.0.0/16"),
 				)
-				result, err := v.ValidateCalicoPrimary(c)
+				result, err := validateCalicoPrimaryForTest(v, c)
 				Expect(err).NotTo(HaveOccurred())
 				issues, err := v.CalicoPrimaryIssues(vmRef, result.Cache)
 				Expect(err).NotTo(HaveOccurred())
@@ -2654,7 +2703,7 @@ var _ = Describe("vsphere validation tests", func() {
 					makeNetwork(l2Single),
 					makeIPPool("vlan100-pool", "10.100.0.0/24", "L2Workload"),
 				)
-				result, err := v.ValidateCalicoPrimary(c)
+				result, err := validateCalicoPrimaryForTest(v, c)
 				Expect(err).NotTo(HaveOccurred())
 				issues, err := v.CalicoPrimaryIssues(vmRef, result.Cache)
 				Expect(err).NotTo(HaveOccurred())
@@ -2671,7 +2720,7 @@ var _ = Describe("vsphere validation tests", func() {
 					// pool covers VLAN subnet but excludes 10.100.0.5
 					makeIPPool("vlan100-upper", "10.100.0.128/25", "L2Workload"),
 				)
-				result, err := v.ValidateCalicoPrimary(c)
+				result, err := validateCalicoPrimaryForTest(v, c)
 				Expect(err).NotTo(HaveOccurred())
 				issues, err := v.CalicoPrimaryIssues(vmRef, result.Cache)
 				Expect(err).NotTo(HaveOccurred())
@@ -2695,7 +2744,7 @@ var _ = Describe("vsphere validation tests", func() {
 				vm.GuestNetworks = append(vm.GuestNetworks, vsphere.GuestNetwork{IP: "192.168.1.5", DeviceConfigId: 4002})
 				v.Source.Inventory.(*mockInventory).vm = vm
 
-				result, err := v.ValidateCalicoPrimary(c)
+				result, err := validateCalicoPrimaryForTest(v, c)
 				Expect(err).NotTo(HaveOccurred())
 				issues, err := v.CalicoPrimaryIssues(vmRef, result.Cache)
 				Expect(err).NotTo(HaveOccurred())
@@ -2716,7 +2765,7 @@ var _ = Describe("vsphere validation tests", func() {
 				vm.GuestNetworks = append(vm.GuestNetworks, vsphere.GuestNetwork{IP: "10.244.0.6", DeviceConfigId: 4001})
 				v.Source.Inventory.(*mockInventory).vm = vm
 
-				result, err := v.ValidateCalicoPrimary(c)
+				result, err := validateCalicoPrimaryForTest(v, c)
 				Expect(err).NotTo(HaveOccurred())
 				issues, err := v.CalicoPrimaryIssues(vmRef, result.Cache)
 				Expect(err).NotTo(HaveOccurred())

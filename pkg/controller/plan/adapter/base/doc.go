@@ -294,32 +294,17 @@ type Validator interface {
 	GuestToolsInstalled(vmRef ref.Ref) (ok bool, err error)
 	// Validate that VM does not need to collapse any snapshots into a single base file
 	ConsolidationNeeded(vmRef ref.Ref) (needed bool, err error)
-	// ValidateCalicoNADs validates every Calico-referencing NAD in the
-	// plan's network map. Issues are NAD-scoped (network/IPPool config);
-	// the returned cache is consumed by CalicoVMIssues.
-	ValidateCalicoNADs(client client.Client) (CalicoValidationResult, error)
 	// CalicoVMIssues returns per-VM Calico issues (IP membership in subnet
-	// / IPPool). Reads only from the cache produced by ValidateCalicoNADs;
-	// VMs whose mapped NAD failed plan-level validation are skipped here
-	// — their failure is already reported via CalicoNetworkInvalid.
+	// / IPPool). Reads only from the cache produced by the shared
+	// ValidateCalicoNADs; VMs whose mapped NAD failed validation are
+	// skipped here — their failure is already reported via
+	// CalicoNetworkInvalid.
 	CalicoVMIssues(vmRef ref.Ref, cache *CalicoValidationCache) ([]CalicoIssue, error)
-	// ValidateCalicoPrimary validates the (at most one) calico-flagged
-	// NetworkMap entry — a type: pod destination carrying the calico
-	// field. Returns plan-level issues (CRD presence, UDN conflict,
-	// Network/VLAN/IPPool resolution) plus a cache consumed by
-	// CalicoPrimaryIssues. On non-vSphere providers, returns a single
-	// CalicoIssuePrimaryProviderUnsupported issue when any calico-flagged
-	// entry is present.
-	//
-	// Precondition: Plan.Referenced.Map.Network is populated by the
-	// dispatcher before this is called. With a nil NetworkMap, returns an
-	// empty result and a non-nil cache with Primary == nil.
-	ValidateCalicoPrimary(client client.Client) (CalicoPrimaryValidationResult, error)
 	// CalicoPrimaryIssues returns per-VM issues for the calico-flagged
 	// primary NIC (IP membership in IPPool / VLAN subnet, gated on
-	// PreserveStaticIPs). Reads only from the cache produced by
-	// ValidateCalicoPrimary; when the cache is nil or Primary is nil (plan
-	// failed, or no calico-flagged entry exists), returns nil.
+	// PreserveStaticIPs). Reads only from the cache produced by the shared
+	// ValidateCalicoPrimary; when the cache is nil or Primary is nil
+	// (validation failed, or no calico-flagged entry exists), returns nil.
 	//
 	// When IP preservation is on but the VM has no findable IPv4 IPs
 	// (IPv6-only or no GuestNetworks reported), no per-VM issue is emitted
@@ -440,7 +425,7 @@ const (
 	// networks require the BPF dataplane. Emitted once per plan.
 	CalicoIssueDataplaneNotBPF CalicoIssueKind = "DataplaneNotBPF"
 
-	// Calico-primary IssueKinds. Used by Validator.ValidateCalicoPrimary
+	// Calico-primary IssueKinds. Used by the shared ValidateCalicoPrimary
 	// and Validator.CalicoPrimaryIssues for the calico-flagged NetworkMap
 	// path (type: pod destinations carrying the calico field). The Primary
 	// prefix disambiguates from the NAD-path kinds above.
