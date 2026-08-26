@@ -3419,7 +3419,11 @@ spec:
           metadata:
             type: object
           spec:
-            description: ForkliftControllerSpec defines the desired state of ForkliftController.
+            description: |-
+              ForkliftControllerSpec defines the desired state of ForkliftController.
+              The seccomp/AppArmor rules below are enforced here as well as in the
+              controller, because the controller treats a profile path without its type as
+              fatal and would crash-loop rather than report the mistake.
             properties:
               aap_ca_secret_name:
                 description: 'Name of the Secret containing a custom CA certificate
@@ -4258,6 +4262,17 @@ spec:
                 - "false"
                 type: string
             type: object
+            x-kubernetes-validations:
+            - message: 'virt_v2v_seccomp_profile_path requires virt_v2v_seccomp_profile_type:
+                Localhost'
+              rule: '!has(self.virt_v2v_seccomp_profile_path) || size(self.virt_v2v_seccomp_profile_path)
+                == 0 || (has(self.virt_v2v_seccomp_profile_type) && self.virt_v2v_seccomp_profile_type
+                == ''Localhost'')'
+            - message: 'virt_v2v_apparmor_profile_path requires virt_v2v_apparmor_profile_type:
+                Localhost'
+              rule: '!has(self.virt_v2v_apparmor_profile_path) || size(self.virt_v2v_apparmor_profile_path)
+                == 0 || (has(self.virt_v2v_apparmor_profile_type) && self.virt_v2v_apparmor_profile_type
+                == ''Localhost'')'
           status:
             description: |-
               ForkliftControllerStatus defines the observed state of ForkliftController.

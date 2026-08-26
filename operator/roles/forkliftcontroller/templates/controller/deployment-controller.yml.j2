@@ -274,7 +274,7 @@ spec:
         - name: VIRT_V2V_SECCOMP_PROFILE_TYPE
           value: "{{ virt_v2v_seccomp_profile_type }}"
 {% endif %}
-{% if virt_v2v_seccomp_profile_path is defined and virt_v2v_seccomp_profile_path != "" %}
+{% if virt_v2v_seccomp_profile_type is defined and virt_v2v_seccomp_profile_type == "Localhost" and virt_v2v_seccomp_profile_path is defined and virt_v2v_seccomp_profile_path != "" %}
         - name: VIRT_V2V_SECCOMP_PROFILE_PATH
           value: "{{ virt_v2v_seccomp_profile_path }}"
 {% endif %}
@@ -282,7 +282,7 @@ spec:
         - name: VIRT_V2V_APPARMOR_PROFILE_TYPE
           value: "{{ virt_v2v_apparmor_profile_type }}"
 {% endif %}
-{% if virt_v2v_apparmor_profile_path is defined and virt_v2v_apparmor_profile_path != "" %}
+{% if virt_v2v_apparmor_profile_type is defined and virt_v2v_apparmor_profile_type == "Localhost" and virt_v2v_apparmor_profile_path is defined and virt_v2v_apparmor_profile_path != "" %}
         - name: VIRT_V2V_APPARMOR_PROFILE_PATH
           value: "{{ virt_v2v_apparmor_profile_path }}"
 {% endif %}
