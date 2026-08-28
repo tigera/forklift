@@ -64,16 +64,25 @@ profile with the mounts that `passt` performs permitted.
 
 ### 2. Point the controller at them
 
+Set the fields on the `ForkliftController` CR. Mistakes are rejected as the
+CR is saved, and the operator carries the values onto the controller:
+
 ```sh
-kubectl -n konveyor-forklift set env deploy/forklift-controller \
-  VIRT_V2V_SECCOMP_PROFILE_TYPE=Localhost \
-  VIRT_V2V_SECCOMP_PROFILE_PATH=profiles/unshare.json \
-  VIRT_V2V_APPARMOR_PROFILE_TYPE=Localhost \
-  VIRT_V2V_APPARMOR_PROFILE_PATH=forklift-virt-v2v-unshare
+kubectl -n konveyor-forklift patch forkliftcontroller forklift-controller \
+  --type merge -p '{"spec":{
+    "virt_v2v_seccomp_profile_type": "Localhost",
+    "virt_v2v_seccomp_profile_path": "profiles/unshare.json",
+    "virt_v2v_apparmor_profile_type": "Localhost",
+    "virt_v2v_apparmor_profile_path": "forklift-virt-v2v-unshare"}}'
 ```
 
 Nodes that do not enforce AppArmor need only the seccomp pair; leave the
 AppArmor settings unset there.
+
+On a deployment without the operator, set the `VIRT_V2V_*` environment
+variables from the table above on the controller Deployment instead. That
+path has no admission check: a path without its type stops the controller
+at startup, with the reason in the controller log.
 
 ## Checking a node before you migrate
 
