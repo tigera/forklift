@@ -21,9 +21,6 @@ import (
 )
 
 // ForkliftControllerSpec defines the desired state of ForkliftController.
-// The seccomp/AppArmor rules below are enforced here as well as in the
-// controller, because the controller treats a profile path without its type as
-// fatal and would crash-loop rather than report the mistake.
 // +kubebuilder:validation:XValidation:rule="!has(self.virt_v2v_seccomp_profile_path) || size(self.virt_v2v_seccomp_profile_path) == 0 || (has(self.virt_v2v_seccomp_profile_type) && self.virt_v2v_seccomp_profile_type == 'Localhost')",message="virt_v2v_seccomp_profile_path requires virt_v2v_seccomp_profile_type: Localhost"
 // +kubebuilder:validation:XValidation:rule="!has(self.virt_v2v_apparmor_profile_path) || size(self.virt_v2v_apparmor_profile_path) == 0 || (has(self.virt_v2v_apparmor_profile_type) && self.virt_v2v_apparmor_profile_type == 'Localhost')",message="virt_v2v_apparmor_profile_path requires virt_v2v_apparmor_profile_type: Localhost"
 type ForkliftControllerSpec struct {
