@@ -3,10 +3,13 @@ packages:
   - virtio-win
   - catatonit
   - libvirt-libs
-  - kernel-6.12.0-211.16.1.el10_2
-  - kernel-modules-core-6.12.0-211.16.1.el10_2
-  - kernel-core-6.12.0-211.16.1.el10_2
-  - kernel-modules-6.12.0-211.16.1.el10_2
+  # Unversioned so refresh-rpm-lockfiles can advance the appliance kernel to the
+  # current z-stream. Pinning an exact NEVRA here froze it permanently and was the
+  # single largest source of CVE findings in the v2.12.7 scan.
+  - kernel
+  - kernel-modules-core
+  - kernel-core
+  - kernel-modules
 contentOrigin:
   repofiles:
     - ./redhat.repo
