@@ -11,7 +11,7 @@ FROM registry.redhat.io/ubi9-minimal:9.7-1778562320
 
 # RUN microdnf -y update && microdnf -y clean all
 # Required to be able to get files from within the pod
-RUN microdnf -y install --setopt=install_weak_deps=0 tar && microdnf -y clean all
+RUN microdnf -y install tar && microdnf -y clean all
 
 COPY --from=builder /app/ova-provider-server /usr/local/bin/ova-provider-server
 ENTRYPOINT ["/usr/local/bin/ova-provider-server"]

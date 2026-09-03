@@ -11,7 +11,7 @@ FROM registry.access.redhat.com/ubi9-minimal:latest
 # RUN microdnf -y update && microdnf -y clean all
 # Required to be able to get files from within the pod
 RUN microdnf -y update && \
-    microdnf -y install --setopt=install_weak_deps=0 tar && \
+    microdnf -y install tar && \
     microdnf -y clean all
 
 COPY --from=builder /app/manager /usr/local/bin/forklift-controller
