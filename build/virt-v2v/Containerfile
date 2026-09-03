@@ -1,6 +1,7 @@
 FROM registry.access.redhat.com/ubi9:latest AS appliance
 
 RUN subscription-manager refresh && \
+    dnf update -y && \
     dnf install -y --setopt=install_weak_deps=False \
         qemu-img \
         libguestfs-devel \

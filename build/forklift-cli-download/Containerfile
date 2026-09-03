@@ -17,6 +17,11 @@ RUN --mount=type=cache,target=${GOCACHE},uid=1001 make build-mcp
 # Nginx + MCP server stage
 FROM registry.access.redhat.com/ubi9/nginx-126:latest
 
+USER 0
+RUN dnf -y update && \
+    dnf -y clean all
+USER 1001
+
 # Copy cross-compiled binaries for all platforms (linux, darwin, windows)
 COPY --from=builder /app/cmd/kubectl-mtv/bin /opt/app-root/src/
 
