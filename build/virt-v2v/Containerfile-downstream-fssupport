@@ -9,13 +9,16 @@ RUN GOOS=linux GOARCH=amd64 go build -buildvcs=false -ldflags="-w -s" -o image-c
 RUN GOOS=linux GOARCH=amd64 go build -buildvcs=false -ldflags="-w -s" -o virt-v2v-wrapper github.com/kubev2v/forklift/cmd/virt-v2v
 RUN GOOS=linux GOARCH=amd64 go build -buildvcs=false -ldflags="-w -s" -o forklift-wait-for-reboot github.com/kubev2v/forklift/cmd/forklift-wait-for-reboot
 
-FROM registry.redhat.io/ubi10:10.2-1777462922
+FROM registry.redhat.io/ubi10:latest
 
 RUN rm /etc/pki/tls/fips_local.cnf && \
     echo -e '[fips_sect]\ntls1-prf-ems-check = 0\nactivate = 1' > /etc/pki/tls/fips_local.cnf && \
     sed -i '/^\\[ crypto_policy \\]/a Options=RHNoEnforceEMSinFIPS' /etc/pki/tls/openssl.cnf
 
 ENV PATH="$PATH:/usr/libexec"
+
+RUN dnf update -y --exclude=kernel,kernel-core,kernel-modules,kernel-modules-core && \
+    dnf clean all
 
 # RHEL 10.1 virt-v2v and deps and custom kernel for libguestfs-fssupport
 #
