@@ -3,6 +3,11 @@ packages:
   - virtio-win
   - catatonit
   - libvirt-libs
+  # Staged for the runtime install: libguestfs only *recommends* these two, and the
+  # runtime stage disables weak deps while setting LIBGUESTFS_BACKEND=libvirt:qemu:///session.
+  # They must be present in the lock before the Containerfile can install them explicitly.
+  - passt
+  - libvirt-daemon-config-network
 contentOrigin:
   repofiles:
     - ./redhat.repo
