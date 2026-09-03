@@ -537,10 +537,13 @@ push-all-images:  push-api-image \
 
 # Scratch registry for pushing locally-built images somewhere a scanner can pull them.
 # Authenticate once with: gcloud auth configure-docker gcr.io
+# GCR treats everything after the project id as part of the image name, so a
+# per-user path can be added if the project gets crowded:
+#   make push-all-images-gcr GCR_REGISTRY_ORG=unique-caldron-775/$(USER)
 GCR_REGISTRY ?= gcr.io
-GCR_REGISTRY_ORG ?= unique-caldron-775/anthony
+GCR_REGISTRY_ORG ?= unique-caldron-775
 
-push-all-images-gcr: ## Build and push all images to gcr.io/unique-caldron-775/anthony
+push-all-images-gcr: ## Build and push all images to gcr.io/unique-caldron-775
 push-all-images-gcr: REGISTRY = $(GCR_REGISTRY)
 push-all-images-gcr: REGISTRY_ORG = $(GCR_REGISTRY_ORG)
 push-all-images-gcr: push-all-images
