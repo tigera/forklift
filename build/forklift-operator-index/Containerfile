@@ -10,7 +10,7 @@ ARG OPERATOR_BUNDLE_IMAGE
 ARG OPM_OPTS
 
 RUN microdnf -y update && \
-    microdnf -y install --setopt=install_weak_deps=0 gettext && \
+    microdnf -y install gettext && \
     microdnf -y clean all
 
 COPY --from=opm /bin/opm /bin/opm

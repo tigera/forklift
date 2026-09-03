@@ -11,7 +11,7 @@ FROM quay.io/centos/centos:stream9
 COPY --from=builder /app/ovirt-populator /usr/local/bin/ovirt-populator
 RUN dnf install -y centos-release-ovirt45
 RUN dnf update -y && \
-    dnf install -y --setopt=install_weak_deps=0 python3-ovirt-engine-sdk4 ovirt-imageio-client && \
+    dnf install -y python3-ovirt-engine-sdk4 ovirt-imageio-client && \
     dnf clean all
 
 ENTRYPOINT ["/usr/local/bin/ovirt-populator"]

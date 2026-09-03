@@ -1,7 +1,7 @@
 FROM registry.access.redhat.com/ubi9:latest AS appliance
 
 RUN subscription-manager refresh && \
-    dnf install -y --setopt=install_weak_deps=0 \
+    dnf install -y --setopt=install_weak_deps=False \
         qemu-img \
         libguestfs-devel \
         libguestfs-winsupport \
@@ -43,7 +43,7 @@ RUN subscription-manager refresh && \
     mkdir /disks && \
     source /etc/os-release && \
     dnf update -y && \
-    dnf install -y --setopt=install_weak_deps=0 \
+    dnf install -y --setopt=install_weak_deps=False \
         virt-v2v \
         virtio-win \
         libvirt-daemon-config-network \

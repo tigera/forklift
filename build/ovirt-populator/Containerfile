@@ -11,7 +11,7 @@ FROM registry.access.redhat.com/ubi8/ubi:latest
 COPY --from=builder /app/ovirt-populator /usr/local/bin/ovirt-populator
 RUN subscription-manager refresh && \
     dnf update -y && \
-    dnf install -y --setopt=install_weak_deps=0 python3-ovirt-engine-sdk4 ovirt-imageio-client && \
+    dnf install -y python3-ovirt-engine-sdk4 ovirt-imageio-client && \
     dnf clean all
 
 ENTRYPOINT ["/usr/local/bin/ovirt-populator"]
