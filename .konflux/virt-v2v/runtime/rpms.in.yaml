@@ -3,18 +3,10 @@ packages:
   - virtio-win
   - catatonit
   - libvirt-libs
-  # Unversioned so refresh-rpm-lockfiles can advance the appliance kernel to the
-  # current z-stream. Pinning an exact NEVRA here froze it permanently and was the
-  # single largest source of CVE findings in the v2.12.7 scan.
-  - kernel
-  - kernel-modules-core
-  - kernel-core
-  - kernel-modules
-  # Staged for the runtime install: libguestfs only *recommends* these two, and the
-  # runtime stage disables weak deps while setting LIBGUESTFS_BACKEND=libvirt:qemu:///session.
-  # They must be present in the lock before the Containerfile can install them explicitly.
-  - passt
-  - libvirt-daemon-config-network
+  - kernel-6.12.0-211.16.1.el10_2
+  - kernel-modules-core-6.12.0-211.16.1.el10_2
+  - kernel-core-6.12.0-211.16.1.el10_2
+  - kernel-modules-6.12.0-211.16.1.el10_2
 contentOrigin:
   repofiles:
     - ./redhat.repo
