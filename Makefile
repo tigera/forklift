@@ -535,19 +535,25 @@ push-all-images:  push-api-image \
                   push-operator-bundle-image \
                   push-operator-index-image
 
-# Scratch registry for pushing locally-built images somewhere a scanner can pull them.
-# Authenticate once with: gcloud auth configure-docker gcr.io
+# Tigera registry, for building and scanning images outside the upstream
+# quay.io/kubev2v namespace. Authenticate once with:
+#   gcloud auth configure-docker gcr.io
 # GCR treats everything after the project id as part of the image name, so the
 # tigera-forklift/ segment keeps these out of the shared project root. Override
-# it to push somewhere else, e.g.:
-#   make push-all-images-gcr GCR_REGISTRY_ORG=unique-caldron-775/$(USER)
-GCR_REGISTRY ?= gcr.io
-GCR_REGISTRY_ORG ?= unique-caldron-775/tigera-forklift
+# it to point somewhere else, e.g.:
+#   make push-all-images-tigera TIGERA_REGISTRY_ORG=unique-caldron-775/$(USER)
+TIGERA_REGISTRY ?= gcr.io
+TIGERA_REGISTRY_ORG ?= unique-caldron-775/tigera-forklift
 
-push-all-images-gcr: ## Build and push all images to gcr.io/unique-caldron-775/tigera-forklift
-push-all-images-gcr: REGISTRY = $(GCR_REGISTRY)
-push-all-images-gcr: REGISTRY_ORG = $(GCR_REGISTRY_ORG)
-push-all-images-gcr: push-all-images
+build-all-images-tigera: ## Build all images tagged for gcr.io/unique-caldron-775/tigera-forklift
+build-all-images-tigera: REGISTRY = $(TIGERA_REGISTRY)
+build-all-images-tigera: REGISTRY_ORG = $(TIGERA_REGISTRY_ORG)
+build-all-images-tigera: build-all-images
+
+push-all-images-tigera: ## Build and push all images to gcr.io/unique-caldron-775/tigera-forklift
+push-all-images-tigera: REGISTRY = $(TIGERA_REGISTRY)
+push-all-images-tigera: REGISTRY_ORG = $(TIGERA_REGISTRY_ORG)
+push-all-images-tigera: push-all-images
 
 
 ##@ Multi-Architecture Manifests
