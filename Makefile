@@ -535,6 +535,17 @@ push-all-images:  push-api-image \
                   push-operator-bundle-image \
                   push-operator-index-image
 
+# Scratch registry for pushing locally-built images somewhere a scanner can pull them.
+# Authenticate once with: gcloud auth configure-docker gcr.io
+GCR_REGISTRY ?= gcr.io
+GCR_REGISTRY_ORG ?= unique-caldron-775/anthony
+
+push-all-images-gcr: ## Build and push all images to gcr.io/unique-caldron-775/anthony
+push-all-images-gcr: REGISTRY = $(GCR_REGISTRY)
+push-all-images-gcr: REGISTRY_ORG = $(GCR_REGISTRY_ORG)
+push-all-images-gcr: push-all-images
+
+
 ##@ Multi-Architecture Manifests
 
 push-controller-image-manifest:
