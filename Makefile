@@ -568,6 +568,19 @@ push-all-images-tigera: REGISTRY_ORG = $(TIGERA_REGISTRY_ORG)
 push-all-images-tigera: $(addsuffix -image,$(addprefix push-,$(TIGERA_IMAGES)))
 
 
+# Quay, for comparing how Red Hat Quay renders vulnerability data on the same
+# images. Authenticate with: docker login quay.io
+# Quay repositories are namespace/name only - it has no nested paths - so there
+# is no tigera-forklift/ segment here, unlike the GCR target.
+QUAY_REGISTRY ?= quay.io
+QUAY_REGISTRY_ORG ?= tigeradev
+
+push-all-images-quay: ## Build and push all images to quay.io/tigeradev
+push-all-images-quay: REGISTRY = $(QUAY_REGISTRY)
+push-all-images-quay: REGISTRY_ORG = $(QUAY_REGISTRY_ORG)
+push-all-images-quay: $(addsuffix -image,$(addprefix push-,$(TIGERA_IMAGES)))
+
+
 ##@ Multi-Architecture Manifests
 
 push-controller-image-manifest:
