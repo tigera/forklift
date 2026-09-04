@@ -535,6 +535,52 @@ push-all-images:  push-api-image \
                   push-operator-bundle-image \
                   push-operator-index-image
 
+# Tigera registry, for building and scanning images outside the upstream
+# quay.io/kubev2v namespace. Authenticate once with:
+#   gcloud auth configure-docker gcr.io
+# GCR treats everything after the project id as part of the image name, so the
+# tigera-forklift/ segment keeps these out of the shared project root. Override
+# it to point somewhere else, e.g.:
+#   make push-all-images-tigera TIGERA_REGISTRY_ORG=unique-caldron-775/$(USER)
+TIGERA_REGISTRY ?= gcr.io
+TIGERA_REGISTRY_ORG ?= unique-caldron-775/tigera-forklift
+
+# Same set as build-all-images minus the operator index. The index build runs
+# `opm render <bundle>` inside the build container, which pulls the bundle from
+# the registry with no credentials available to it. That works upstream because
+# quay.io/kubev2v is public; our GCR repo is private, so it gets 403 even after
+# the bundle has been pushed. The index holds only opm plus catalog YAML, so
+# there is nothing in it to scan. Build it with `make build-operator-index-image`
+# against a public bundle if you actually need it.
+TIGERA_IMAGES := api controller validation operator virt-v2v virt-v2v-xfs \
+                 populator-controller ovirt-populator openstack-populator \
+                 vsphere-copy-offload-populator ova-provider-server \
+                 hyperv-provider-server cli-download ova-proxy operator-bundle
+
+build-all-images-tigera: ## Build all images tagged for gcr.io/unique-caldron-775/tigera-forklift
+build-all-images-tigera: REGISTRY = $(TIGERA_REGISTRY)
+build-all-images-tigera: REGISTRY_ORG = $(TIGERA_REGISTRY_ORG)
+build-all-images-tigera: $(addsuffix -image,$(addprefix build-,$(TIGERA_IMAGES)))
+
+push-all-images-tigera: ## Build and push all images to gcr.io/unique-caldron-775/tigera-forklift
+push-all-images-tigera: REGISTRY = $(TIGERA_REGISTRY)
+push-all-images-tigera: REGISTRY_ORG = $(TIGERA_REGISTRY_ORG)
+push-all-images-tigera: $(addsuffix -image,$(addprefix push-,$(TIGERA_IMAGES)))
+
+
+# Quay, for comparing how Red Hat Quay renders vulnerability data on the same
+# images. Authenticate with: docker login quay.io
+# Quay repositories are namespace/name only - it has no nested paths - so there
+# is no tigera-forklift/ segment here, unlike the GCR target.
+QUAY_REGISTRY ?= quay.io
+QUAY_REGISTRY_ORG ?= tigeradev
+
+push-all-images-quay: ## Build and push all images to quay.io/tigeradev
+push-all-images-quay: REGISTRY = $(QUAY_REGISTRY)
+push-all-images-quay: REGISTRY_ORG = $(QUAY_REGISTRY_ORG)
+push-all-images-quay: $(addsuffix -image,$(addprefix push-,$(TIGERA_IMAGES)))
+
+
 ##@ Multi-Architecture Manifests
 
 push-controller-image-manifest:
