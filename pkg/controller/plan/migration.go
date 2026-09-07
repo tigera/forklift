@@ -53,7 +53,15 @@ const (
 	// moved into base migrators.
 	ImageConversion = "ImageConversion"
 	DiskTransferV2v = "DiskTransferV2v"
+
+	// annCookieRefreshedAt records when import credentials were last
+	// refreshed for a DataVolume so short-lived download cookies are not
+	// rotated on every reconcile while the importer is crash-looping.
+	annCookieRefreshedAt = "forklift.konveyor.io/download-cookie-refreshed-at"
 )
+
+// Minimum time between download-cookie refreshes for the same DataVolume.
+const cookieRefreshCooldown = time.Minute
 
 // Migration.
 type Migration struct {
@@ -167,7 +175,7 @@ func (r *Migration) Run() (reQ time.Duration, err error) {
 
 // Get/Build resources.
 func (r *Migration) init() (err error) {
-	adapter, err := adapter.New(r.Context.Source.Provider)
+	adapter, err := adapter.New(r.Source.Provider)
 	if err != nil {
 		return
 	}
@@ -736,7 +744,7 @@ func (r *Migration) deleteProviderPVs(getPVs func(client.Client, string) (*core.
 	}
 
 	for _, pv := range pvList.Items {
-		err := r.Destination.Client.Delete(context.TODO(), &pv)
+		err := r.Destination.Delete(context.TODO(), &pv)
 		if err != nil {
 			r.Log.Error(err, "Failed to delete "+pvType+" PV", "pv", pv.Name)
 			return err
@@ -754,7 +762,7 @@ func (r *Migration) deleteProviderPVCs(getPVCs func(client.Client, string, strin
 	}
 
 	for _, pvc := range pvcList.Items {
-		err := r.Destination.Client.Delete(context.TODO(), &pvc)
+		err := r.Destination.Delete(context.TODO(), &pvc)
 		if err != nil {
 			r.Log.Error(err, "Failed to delete "+pvcType+" PVC", "pvc", pvc.Name)
 			return err
@@ -769,7 +777,7 @@ func (r *Migration) deleteConfigMap() (err error) {
 		kUse:  VddkConf,
 	})
 	list := &core.ConfigMapList{}
-	err = r.Destination.Client.List(
+	err = r.Destination.List(
 		context.TODO(),
 		list,
 		&client.ListOptions{
@@ -783,7 +791,7 @@ func (r *Migration) deleteConfigMap() (err error) {
 	for _, configmap := range list.Items {
 		background := meta.DeletePropagationBackground
 		opts := &client.DeleteOptions{PropagationPolicy: &background}
-		err = r.Destination.Client.Delete(context.TODO(), &configmap, opts)
+		err = r.Destination.Delete(context.TODO(), &configmap, opts)
 		if err != nil {
 			r.Log.Error(err, "Failed to delete vddk-config", "configmap", configmap)
 		} else {
@@ -796,7 +804,7 @@ func (r *Migration) deleteConfigMap() (err error) {
 func (r *Migration) deleteValidateVddkJob() (err error) {
 	selector := labels.SelectorFromSet(map[string]string{"plan": string(r.Plan.UID)})
 	jobs := &batchv1.JobList{}
-	err = r.Destination.Client.List(
+	err = r.Destination.List(
 		context.TODO(),
 		jobs,
 		&client.ListOptions{
@@ -810,7 +818,7 @@ func (r *Migration) deleteValidateVddkJob() (err error) {
 	for _, job := range jobs.Items {
 		background := meta.DeletePropagationBackground
 		opts := &client.DeleteOptions{PropagationPolicy: &background}
-		err = r.Destination.Client.Delete(context.TODO(), &job, opts)
+		err = r.Destination.Delete(context.TODO(), &job, opts)
 		if err != nil {
 			r.Log.Error(err, "Failed to delete validate-vddk job", "job", job)
 		}
@@ -820,9 +828,9 @@ func (r *Migration) deleteValidateVddkJob() (err error) {
 
 // Best effort attempt to resolve canceled refs.
 func (r *Migration) resolveCanceledRefs() {
-	for i := range r.Context.Migration.Spec.Cancel {
+	for i := range r.Migration.Spec.Cancel {
 		// resolve the VM ref in place
-		ref := &r.Context.Migration.Spec.Cancel[i]
+		ref := &r.Migration.Spec.Cancel[i]
 		_, _ = r.Source.Inventory.VM(ref)
 	}
 }
@@ -843,7 +851,7 @@ func (r *Migration) runningVMs() (vms []*plan.VMStatus) {
 func (r *Migration) execute(vm *plan.VMStatus) (err error) {
 	vm.DeleteCondition(api.ConditionPending)
 	// check whether the VM has been canceled by the user
-	if r.Context.Migration.Spec.Canceled(vm.Ref) {
+	if r.Migration.Spec.Canceled(vm.Ref) {
 		vm.SetCondition(
 			libcnd.Condition{
 				Type:     api.ConditionCanceled,
@@ -1145,7 +1153,7 @@ func (r *Migration) execute(vm *plan.VMStatus) (err error) {
 							continue
 						}
 						dataVolume := &cdi.DataVolume{}
-						err = r.Destination.Client.Get(
+						err = r.Destination.Get(
 							context.TODO(),
 							types.NamespacedName{Namespace: pvc.Namespace, Name: owner.Name},
 							dataVolume)
@@ -1163,7 +1171,7 @@ func (r *Migration) execute(vm *plan.VMStatus) (err error) {
 						// allows forklift to reuse all the existing warm migration
 						// logic to continue after a storage offload initial copy.
 						dataVolume.Annotations[base.AnnAllowClaimAdoption] = "false"
-						err = r.Destination.Client.Update(context.TODO(), dataVolume)
+						err = r.Destination.Update(context.TODO(), dataVolume)
 						if err != nil {
 							r.Log.Error(err, "error updating DataVolume, retrying", "dv", dataVolume.Name)
 							return
@@ -1371,11 +1379,11 @@ func (r *Migration) execute(vm *plan.VMStatus) (err error) {
 			if r.converter == nil {
 				labels := map[string]string{
 					"plan":      string(r.Plan.GetUID()),
-					"migration": string(r.Context.Migration.UID),
+					"migration": string(r.Migration.UID),
 					"vmID":      vm.ID,
 					"app":       "forklift",
 				}
-				r.converter = adapter.NewConverter(&r.Context.Destination, r.Log.WithName("converter"), labels, getVirtV2vImage(r.Plan), resolveServiceAccount(r.Plan))
+				r.converter = adapter.NewConverter(&r.Destination, r.Log.WithName("converter"), labels, getVirtV2vImage(r.Plan), resolveServiceAccount(r.Plan))
 				r.converter.FilterFn = func(pvc *core.PersistentVolumeClaim) bool {
 					val, ok := pvc.Annotations[base.AnnRequiresConversion]
 					return ok && val == "true"
@@ -2042,7 +2050,7 @@ func (r *Migration) updateCopyProgress(vm *plan.VMStatus, step *plan.Step) (err 
 				r.setTaskCompleted(task)
 			case cdi.Paused:
 				pvc := &core.PersistentVolumeClaim{}
-				err = r.Destination.Client.Get(context.TODO(), types.NamespacedName{
+				err = r.Destination.Get(context.TODO(), types.NamespacedName{
 					Namespace: r.Plan.Spec.TargetNamespace,
 					Name:      dv.Status.ClaimName,
 				}, pvc)
@@ -2102,7 +2110,7 @@ func (r *Migration) updateCopyProgress(vm *plan.VMStatus, step *plan.Step) (err 
 					found = false
 				} else {
 					pvc := &core.PersistentVolumeClaim{}
-					err = r.Destination.Client.Get(context.TODO(), types.NamespacedName{
+					err = r.Destination.Get(context.TODO(), types.NamespacedName{
 						Namespace: r.Plan.Spec.TargetNamespace,
 						Name:      dv.Status.ClaimName,
 					}, pvc)
@@ -2116,7 +2124,7 @@ func (r *Migration) updateCopyProgress(vm *plan.VMStatus, step *plan.Step) (err 
 							path.Join(dv.Namespace, dv.Name))
 						continue
 					}
-					err = r.Destination.Client.Get(context.TODO(), types.NamespacedName{
+					err = r.Destination.Get(context.TODO(), types.NamespacedName{
 						Namespace: r.Plan.Spec.TargetNamespace,
 						Name:      fmt.Sprintf("prime-%s", pvc.UID),
 					}, pvc)
@@ -2163,6 +2171,7 @@ func (r *Migration) updateCopyProgress(vm *plan.VMStatus, step *plan.Step) (err 
 				if r.Plan.IsWarm() && len(importer.Status.ContainerStatuses) > 0 {
 					vm.Warm.Failures = int(importer.Status.ContainerStatuses[0].RestartCount)
 				}
+				r.maybeRefreshImportCredentials(vm, dv.DataVolume, importer)
 				if restartLimitExceeded(importer) {
 					task.MarkedCompleted()
 					msg, _ := terminationMessage(importer)
@@ -2290,7 +2299,7 @@ func (r *Migration) updateConversionProgressV2vMonitor(pod *core.Pod, step *plan
 	resp, err := http.Get(url)
 	switch {
 	case err == nil:
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 	case strings.Contains(err.Error(), "connection refused"):
 		return nil
 	default:
@@ -2351,7 +2360,7 @@ func (r *Migration) setDataVolumeCheckpoints(vm *plan.VMStatus) (err error) {
 		return
 	}
 	for i := range dvs {
-		err = r.Destination.Client.Update(context.TODO(), &dvs[i])
+		err = r.Destination.Update(context.TODO(), &dvs[i])
 		if err != nil {
 			err = liberr.Wrap(err)
 			return
@@ -2523,6 +2532,97 @@ func terminationMessage(pod *core.Pod) (msg string, ok bool) {
 		pod.Status.ContainerStatuses[0].LastTerminationState.Terminated.ExitCode > 0 {
 		msg = pod.Status.ContainerStatuses[0].LastTerminationState.Terminated.Message
 		ok = true
+	}
+	return
+}
+
+// maybeRefreshImportCredentials rotates short-lived download credentials
+// (e.g. Nutanix Prism Central cookies) when the CDI importer fails with an
+// auth error, then deletes the importer pod so CDI recreates it with the
+// updated SecretExtraHeaders Secret mounted — without recreating the DV.
+func (r *Migration) maybeRefreshImportCredentials(vm *plan.VMStatus, dv *cdi.DataVolume, importer *core.Pod) {
+	if !isImportAuthFailure(importer) {
+		return
+	}
+	if dv.Annotations != nil {
+		if last, err := time.Parse(time.RFC3339, dv.Annotations[annCookieRefreshedAt]); err == nil {
+			if time.Since(last) < cookieRefreshCooldown {
+				return
+			}
+		}
+	}
+
+	refreshed, err := r.builder.RefreshImportCredentials(dv)
+	if err != nil {
+		log.Error(err, "Failed to refresh import credentials.",
+			"vm", vm.String(),
+			"dv.name", dv.Name,
+			"dv.namespace", dv.Namespace)
+		return
+	}
+	if !refreshed {
+		return
+	}
+
+	fresh := &cdi.DataVolume{}
+	err = r.Destination.Get(
+		context.TODO(),
+		types.NamespacedName{Namespace: dv.Namespace, Name: dv.Name},
+		fresh,
+	)
+	if err != nil {
+		log.Error(err, "Failed to get DataVolume after credential refresh.",
+			"dv.name", dv.Name,
+			"dv.namespace", dv.Namespace)
+		return
+	}
+	if fresh.Annotations == nil {
+		fresh.Annotations = map[string]string{}
+	}
+	fresh.Annotations[annCookieRefreshedAt] = time.Now().UTC().Format(time.RFC3339)
+	if err = r.Destination.Update(context.TODO(), fresh); err != nil {
+		log.Error(err, "Failed to annotate DataVolume after credential refresh.",
+			"dv.name", dv.Name,
+			"dv.namespace", dv.Namespace)
+		return
+	}
+
+	if err = r.Destination.Delete(context.TODO(), importer); err != nil && !k8serr.IsNotFound(err) {
+		log.Error(err, "Failed to restart importer after credential refresh.",
+			"pod.name", importer.Name,
+			"pod.namespace", importer.Namespace,
+			"dv.name", dv.Name,
+			"dv.namespace", dv.Namespace)
+		return
+	}
+	log.Info("Restarted importer after credential refresh.",
+		"pod.name", importer.Name,
+		"pod.namespace", importer.Namespace,
+		"dv.name", dv.Name,
+		"dv.namespace", dv.Namespace,
+		"vm", vm.String())
+}
+
+func isImportAuthFailure(pod *core.Pod) bool {
+	msg, ok := importFailureMessage(pod)
+	if !ok {
+		return false
+	}
+	return strings.Contains(msg, "got 401") ||
+		strings.Contains(msg, "401 Unauthorized") ||
+		strings.Contains(msg, "status code 401")
+}
+
+func importFailureMessage(pod *core.Pod) (msg string, ok bool) {
+	if msg, ok = terminationMessage(pod); ok {
+		return
+	}
+	if len(pod.Status.ContainerStatuses) == 0 {
+		return
+	}
+	terminated := pod.Status.ContainerStatuses[0].State.Terminated
+	if terminated != nil && terminated.ExitCode > 0 {
+		return terminated.Message, true
 	}
 	return
 }

@@ -17,6 +17,7 @@ import (
 	v1 "k8s.io/api/apps/v1"
 	core "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
+	storagev1 "k8s.io/api/storage/v1"
 	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	k8stypes "k8s.io/apimachinery/pkg/types"
@@ -291,7 +292,7 @@ var _ = Describe("vSphere builder", func() {
 				},
 			}
 			builder.Source.Inventory = &mockInventory{ds: model.Datastore{Resource: model.Resource{ID: "ds-2"}}, vm: vm}
-			builder.Context.Map.Storage = &v1beta1.StorageMap{
+			builder.Map.Storage = &v1beta1.StorageMap{
 				Spec: v1beta1.StorageMapSpec{
 					Map: []v1beta1.StoragePair{{
 						Source: ref.Ref{ID: "ds-2"},
@@ -541,16 +542,18 @@ var _ = Describe("vSphere builder", func() {
 				VM1: model.VM1{
 					VM0: model.VM0{ID: "vm-1", Name: "test-vm"},
 				},
-				CustomDef: []vsphere.CustomFieldDef{
-					{Key: 100, Name: "app-name"},
-					{Key: 101, Name: "app-version"},
-				},
 				CustomValues: []vsphere.CustomFieldValue{
 					{Key: 100, Value: "my-application"},
 					{Key: 101, Value: "v1.2.3"},
 				},
 			}
-			builder.Source.Inventory = &mockInventory{vm: vm}
+			builder.Source.Inventory = &mockInventory{
+				vm: vm,
+				customDefs: []model.CustomFieldDef{
+					{Key: 100, Name: "app-name"},
+					{Key: 101, Name: "app-version"},
+				},
+			}
 
 			labels, annotations, _, err := builder.SourceVMLabelsAndAnnotations(ref.Ref{ID: "vm-1"}, nil)
 
@@ -614,14 +617,16 @@ var _ = Describe("vSphere builder", func() {
 				Tags: []vsphere.Tag{
 					{Name: "owner", Description: "platform-team"},
 				},
-				CustomDef: []vsphere.CustomFieldDef{
-					{Key: 100, Name: "app-name"},
-				},
 				CustomValues: []vsphere.CustomFieldValue{
 					{Key: 100, Value: "my-application"},
 				},
 			}
-			builder.Source.Inventory = &mockInventory{vm: vm}
+			builder.Source.Inventory = &mockInventory{
+				vm: vm,
+				customDefs: []model.CustomFieldDef{
+					{Key: 100, Name: "app-name"},
+				},
+			}
 
 			labels, annotations, _, err := builder.SourceVMLabelsAndAnnotations(ref.Ref{ID: "vm-1"}, nil)
 
@@ -642,14 +647,16 @@ var _ = Describe("vSphere builder", func() {
 					{Name: "owner", Description: "platform-team"},
 					{Name: "environment", Description: "production"},
 				},
-				CustomDef: []vsphere.CustomFieldDef{
-					{Key: 100, Name: "app-name"},
-				},
 				CustomValues: []vsphere.CustomFieldValue{
 					{Key: 100, Value: "my-application"},
 				},
 			}
-			builder.Source.Inventory = &mockInventory{vm: vm}
+			builder.Source.Inventory = &mockInventory{
+				vm: vm,
+				customDefs: []model.CustomFieldDef{
+					{Key: 100, Name: "app-name"},
+				},
+			}
 
 			tagMapping := &v1beta1.TagMapping{
 				Disabled: true,
@@ -715,14 +722,16 @@ var _ = Describe("vSphere builder", func() {
 				VM1: model.VM1{
 					VM0: model.VM0{ID: "vm-1", Name: "test-vm"},
 				},
-				CustomDef: []vsphere.CustomFieldDef{
-					{Key: 100, Name: "invalid attr name"},
-				},
 				CustomValues: []vsphere.CustomFieldValue{
 					{Key: 100, Value: "some-value"},
 				},
 			}
-			builder.Source.Inventory = &mockInventory{vm: vm}
+			builder.Source.Inventory = &mockInventory{
+				vm: vm,
+				customDefs: []model.CustomFieldDef{
+					{Key: 100, Name: "invalid attr name"},
+				},
+			}
 
 			_, annotations, sanitizationReport, err := builder.SourceVMLabelsAndAnnotations(ref.Ref{ID: "vm-1"}, nil)
 
@@ -739,16 +748,18 @@ var _ = Describe("vSphere builder", func() {
 				VM1: model.VM1{
 					VM0: model.VM0{ID: "vm-1", Name: "test-vm"},
 				},
-				CustomDef: []vsphere.CustomFieldDef{
-					{Key: 100, Name: "!@#$"},
-					{Key: 101, Name: "valid-attr"},
-				},
 				CustomValues: []vsphere.CustomFieldValue{
 					{Key: 100, Value: "should-be-skipped"},
 					{Key: 101, Value: "kept"},
 				},
 			}
-			builder.Source.Inventory = &mockInventory{vm: vm}
+			builder.Source.Inventory = &mockInventory{
+				vm: vm,
+				customDefs: []model.CustomFieldDef{
+					{Key: 100, Name: "!@#$"},
+					{Key: 101, Name: "valid-attr"},
+				},
+			}
 
 			_, annotations, _, err := builder.SourceVMLabelsAndAnnotations(ref.Ref{ID: "vm-1"}, nil)
 
@@ -761,7 +772,7 @@ var _ = Describe("vSphere builder", func() {
 
 	builder := createBuilder()
 	DescribeTable("should", func(vm *model.VM, outputMap string) {
-		Expect(builder.mapMacStaticIps(vm)).Should(Equal(outputMap))
+		Expect(builder.mapMacStaticIps(vm, nil)).Should(Equal(outputMap))
 	},
 		Entry("no static ips", &model.VM{GuestID: "windows9Guest"}, ""),
 		Entry("single static ip", &model.VM{
@@ -872,6 +883,99 @@ var _ = Describe("vSphere builder", func() {
 			},
 		}, "00:50:56:83:25:47:ip:172.29.3.193,172.29.3.2,16,8.8.8.8_00:50:56:83:25:48:ip:172.29.3.192,172.29.3.1,24,4.4.4.4_00:50:56:83:25:47:ip:2620:52:9:162e::97,2620:52:9:162e::98,64,2620:52:9:162e::1,2620:52:9:162e::2,2620:52:9:162e::3_00:50:56:83:25:48:ip:2620:52:9:162e::90,2620:52:9:162e::95,32,2620:52:9:162e::4,2620:52:9:162e::5,2620:52:9:162e::6"),
 	)
+
+	Context("mapMacStaticIps with networkIPMode filtering", func() {
+		It("should skip NICs with mode 'none'", func() {
+			b := createBuilder()
+			vm := &model.VM{
+				GuestID: "windows9Guest",
+				GuestNetworks: []vsphere.GuestNetwork{
+					{MAC: "00:50:56:83:25:47", IP: "172.29.3.193", Origin: ManualOrigin, PrefixLength: 16},
+					{MAC: "00:50:56:83:25:48", IP: "172.29.3.194", Origin: ManualOrigin, PrefixLength: 16},
+				},
+				GuestIpStacks: []vsphere.GuestIpStack{{Gateway: "172.29.3.1", Network: "0.0.0.0"}},
+			}
+			modeByMAC := map[string]string{
+				"00:50:56:83:25:47": "preserve",
+				"00:50:56:83:25:48": "none",
+			}
+			result, err := b.mapMacStaticIps(vm, modeByMAC)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).To(ContainSubstring("00:50:56:83:25:47"))
+			Expect(result).NotTo(ContainSubstring("00:50:56:83:25:48"))
+		})
+
+		It("should skip NICs with mode 'dhcp'", func() {
+			b := createBuilder()
+			vm := &model.VM{
+				GuestID: "windows9Guest",
+				GuestNetworks: []vsphere.GuestNetwork{
+					{MAC: "00:50:56:83:25:47", IP: "172.29.3.193", Origin: ManualOrigin, PrefixLength: 16},
+				},
+			}
+			modeByMAC := map[string]string{
+				"00:50:56:83:25:47": "dhcp",
+			}
+			result, err := b.mapMacStaticIps(vm, modeByMAC)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).To(BeEmpty())
+		})
+
+		It("should include NICs not in modeByMAC (backward compat)", func() {
+			b := createBuilder()
+			vm := &model.VM{
+				GuestID: "windows9Guest",
+				GuestNetworks: []vsphere.GuestNetwork{
+					{MAC: "00:50:56:83:25:47", IP: "172.29.3.193", Origin: ManualOrigin, PrefixLength: 16},
+				},
+				GuestIpStacks: []vsphere.GuestIpStack{{Gateway: "172.29.3.1", Network: "0.0.0.0"}},
+			}
+			// NIC not in the map at all — should proceed
+			modeByMAC := map[string]string{}
+			result, err := b.mapMacStaticIps(vm, modeByMAC)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).To(ContainSubstring("00:50:56:83:25:47"))
+		})
+
+		It("should include all NICs when modeByMAC is nil", func() {
+			b := createBuilder()
+			vm := &model.VM{
+				GuestID: "windows9Guest",
+				GuestNetworks: []vsphere.GuestNetwork{
+					{MAC: "00:50:56:83:25:47", IP: "172.29.3.193", Origin: ManualOrigin, PrefixLength: 16},
+					{MAC: "00:50:56:83:25:48", IP: "172.29.3.194", Origin: ManualOrigin, PrefixLength: 16},
+				},
+				GuestIpStacks: []vsphere.GuestIpStack{{Gateway: "172.29.3.1", Network: "0.0.0.0"}},
+			}
+			result, err := b.mapMacStaticIps(vm, nil)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).To(ContainSubstring("00:50:56:83:25:47"))
+			Expect(result).To(ContainSubstring("00:50:56:83:25:48"))
+		})
+
+		It("should preserve only marked NICs in a mixed-mode map", func() {
+			b := createBuilder()
+			vm := &model.VM{
+				GuestID: "windows9Guest",
+				GuestNetworks: []vsphere.GuestNetwork{
+					{MAC: "00:50:56:83:25:47", IP: "172.29.3.193", Origin: ManualOrigin, PrefixLength: 16},
+					{MAC: "00:50:56:83:25:48", IP: "172.29.3.194", Origin: ManualOrigin, PrefixLength: 16},
+					{MAC: "00:50:56:83:25:49", IP: "172.29.3.195", Origin: ManualOrigin, PrefixLength: 16},
+				},
+				GuestIpStacks: []vsphere.GuestIpStack{{Gateway: "172.29.3.1", Network: "0.0.0.0"}},
+			}
+			modeByMAC := map[string]string{
+				"00:50:56:83:25:47": "preserve",
+				"00:50:56:83:25:48": "dhcp",
+				"00:50:56:83:25:49": "none",
+			}
+			result, err := b.mapMacStaticIps(vm, modeByMAC)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).To(ContainSubstring("00:50:56:83:25:47"))
+			Expect(result).NotTo(ContainSubstring("00:50:56:83:25:48"))
+			Expect(result).NotTo(ContainSubstring("00:50:56:83:25:49"))
+		})
+	})
 
 	DescribeTable("should", func(disks []vsphere.Disk, output []vsphere.Disk) {
 		vm := &model.VM1{}
@@ -1568,12 +1672,282 @@ var _ = DescribeTable("instance UUID check", func(cdiVersion string, expected bo
 	Entry("should not use instance UUIDs on 4.18.5", "4.18.5", false),
 )
 
+var _ = Describe("excludeDisks", func() {
+	It("should drop disks whose busAddress is listed", func() {
+		vm := &model.VM{
+			VM1: model.VM1{
+				VM0: model.VM0{ID: "test-vm-id", Name: "test"},
+				Disks: []vsphere.Disk{
+					{File: "[ds] vm/disk0.vmdk", BusAddress: "scsi0:0"},
+					{File: "[ds] vm/disk1.vmdk", BusAddress: "scsi0:1"},
+					{File: "[ds] vm/disk2.vmdk", BusAddress: "scsi0:2"},
+				},
+			},
+		}
+		builder := createBuilder()
+		builder.Plan.Spec.VMs = []plan.VM{{
+			Ref:          ref.Ref{ID: "test-vm-id"},
+			ExcludeDisks: []string{"scsi0:1"},
+		}}
+		builder.removeExcludedDisks(vm)
+		Expect(vm.Disks).To(HaveLen(2))
+		Expect(vm.Disks[0].BusAddress).To(Equal("scsi0:0"))
+		Expect(vm.Disks[1].BusAddress).To(Equal("scsi0:2"))
+	})
+
+	It("should leave disks unchanged when excludeDisks is empty", func() {
+		vm := &model.VM{
+			VM1: model.VM1{
+				VM0: model.VM0{ID: "test-vm-id", Name: "test"},
+				Disks: []vsphere.Disk{
+					{File: "[ds] vm/disk0.vmdk", BusAddress: "scsi0:0"},
+					{File: "[ds] vm/disk1.vmdk", BusAddress: "scsi0:1"},
+				},
+			},
+		}
+		builder := createBuilder()
+		builder.removeExcludedDisks(vm)
+		Expect(vm.Disks).To(HaveLen(2))
+	})
+
+	Context("builder methods omit the excluded disk from generated resources", func() {
+		const (
+			keptDiskFile     = "[ds] vm/disk0.vmdk"
+			excludedDiskFile = "[ds] vm/disk1.vmdk"
+			excludedBus      = "scsi0:1"
+			keptDatastore    = "ds-1"
+			csiDatastore     = "ds-csi"
+			storageClass     = "test-sc"
+		)
+
+		twoDiskVM := func() model.VM {
+			return model.VM{
+				ConnectionState: string(types.VirtualMachineConnectionStateConnected),
+				CpuCount:        2,
+				CoresPerSocket:  1,
+				MemoryMB:        1024,
+				UUID:            "vm-uuid",
+				VM1: model.VM1{
+					VM0: model.VM0{ID: "test-vm-id", Name: "test"},
+					Disks: []vsphere.Disk{
+						{
+							File:       keptDiskFile,
+							BusAddress: "scsi0:0",
+							Datastore:  vsphere.Ref{ID: keptDatastore},
+							Capacity:   1 << 30,
+							Key:        2000,
+							Bus:        vsphere.SCSI,
+						},
+						{
+							File:       excludedDiskFile,
+							BusAddress: excludedBus,
+							Datastore:  vsphere.Ref{ID: keptDatastore},
+							Capacity:   2 << 30,
+							Key:        2001,
+							Bus:        vsphere.SCSI,
+						},
+					},
+				},
+			}
+		}
+
+		storageMap := func(dsID string, plugin *v1beta1.OffloadPlugin) *v1beta1.StorageMap {
+			return &v1beta1.StorageMap{
+				Spec: v1beta1.StorageMapSpec{
+					Map: []v1beta1.StoragePair{{
+						Source: ref.Ref{ID: dsID},
+						Destination: v1beta1.DestinationStorage{
+							StorageClass: storageClass,
+						},
+						OffloadPlugin: plugin,
+					}},
+				},
+			}
+		}
+
+		It("DataVolumes should omit the excluded disk", func() {
+			vm := twoDiskVM()
+			builder := createBuilder()
+			builder.Plan.Spec.VMs[0].ExcludeDisks = []string{excludedBus}
+			builder.Source.Inventory = &mockInventory{
+				ds: model.Datastore{Resource: model.Resource{ID: keptDatastore}},
+				vm: vm,
+			}
+			builder.Map.Storage = storageMap(keptDatastore, nil)
+
+			dvs, err := builder.DataVolumes(
+				ref.Ref{ID: vm.ID},
+				&core.Secret{ObjectMeta: meta.ObjectMeta{Name: "test-secret"}},
+				nil,
+				&cdi.DataVolume{},
+				nil,
+			)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(dvs).To(HaveLen(1))
+			Expect(dvs[0].Annotations[planbase.AnnDiskSource]).To(Equal(keptDiskFile))
+		})
+
+		It("VirtualMachine should omit the excluded disk", func() {
+			vm := twoDiskVM()
+			builder := createBuilder()
+			builder.Plan.Spec.VMs[0].ExcludeDisks = []string{excludedBus}
+			builder.Source.Inventory = &mockInventory{vm: vm}
+			builder.Map.Network = &v1beta1.NetworkMap{}
+			pvcs := []*core.PersistentVolumeClaim{
+				{
+					ObjectMeta: meta.ObjectMeta{
+						Name: "pvc-disk0",
+						Annotations: map[string]string{
+							planbase.AnnDiskSource: keptDiskFile,
+						},
+					},
+				},
+				{
+					ObjectMeta: meta.ObjectMeta{
+						Name: "pvc-disk1",
+						Annotations: map[string]string{
+							planbase.AnnDiskSource: excludedDiskFile,
+						},
+					},
+				},
+			}
+			spec := &cnv.VirtualMachineSpec{Template: &cnv.VirtualMachineInstanceTemplateSpec{}}
+
+			err := builder.VirtualMachine(ref.Ref{ID: vm.ID}, spec, pvcs, true, false)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(spec.Template.Spec.Domain.Devices.Disks).To(HaveLen(1))
+			Expect(spec.Template.Spec.Volumes).To(HaveLen(1))
+			Expect(spec.Template.Spec.Volumes[0].PersistentVolumeClaim.ClaimName).To(Equal("pvc-disk0"))
+		})
+
+		It("Tasks should omit the excluded disk", func() {
+			vm := twoDiskVM()
+			builder := createBuilder()
+			builder.Plan.Spec.VMs[0].ExcludeDisks = []string{excludedBus}
+			builder.Source.Inventory = &mockInventory{vm: vm}
+
+			tasks, err := builder.Tasks(ref.Ref{ID: vm.ID})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(tasks).To(HaveLen(1))
+			Expect(tasks[0].Name).To(Equal(keptDiskFile))
+		})
+
+		It("PopulatorVolumes should omit the excluded disk", func() {
+			vm := twoDiskVM()
+			builder := createBuilder(
+				&core.Secret{
+					ObjectMeta: meta.ObjectMeta{Name: "test-secret", Namespace: "test"},
+					Data:       map[string][]byte{"foo": []byte("bar")},
+				},
+			)
+			builder.Plan.Spec.VMs[0].ExcludeDisks = []string{excludedBus}
+			builder.Source.Inventory = &mockInventory{
+				ds: model.Datastore{Resource: model.Resource{ID: keptDatastore}},
+				vm: vm,
+			}
+			builder.Map.Storage = storageMap(keptDatastore, &v1beta1.OffloadPlugin{
+				VSphereXcopyPluginConfig: &v1beta1.VSphereXcopyPluginConfig{
+					StorageVendorProduct: "test-vendor",
+					SecretRef:            "test-secret",
+				},
+			})
+
+			pvcs, err := builder.PopulatorVolumes(ref.Ref{ID: vm.ID}, map[string]string{"test-annotation": "true"}, "test-secret")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(pvcs).To(HaveLen(1))
+			Expect(pvcs[0].Annotations[planbase.AnnDiskSource]).To(Equal(keptDiskFile))
+		})
+
+		It("CsiImportPVCs should omit the excluded disk", func() {
+			// CsiImportPVCs only emits PVCs for disks whose datastore has CsiVolumeImport.
+			// Mapping CSI onto the excluded disk alone keeps this hermetic: the kept disk
+			// is skipped (no CSI plugin), and the excluded disk never reaches the vSphere
+			// backing lookup. Without removeExcludedDisks the method would try to connect.
+			vm := twoDiskVM()
+			vm.Disks[1].Datastore = vsphere.Ref{ID: csiDatastore}
+			builder := createBuilder()
+			builder.Plan.Spec.VMs[0].ExcludeDisks = []string{excludedBus}
+			builder.Source.Inventory = &mockInventory{
+				datastores: map[string]model.Datastore{
+					keptDatastore: {Resource: model.Resource{ID: keptDatastore}},
+					csiDatastore:  {Resource: model.Resource{ID: csiDatastore}},
+				},
+				vm: vm,
+			}
+			builder.Map.Storage = &v1beta1.StorageMap{
+				Spec: v1beta1.StorageMapSpec{
+					Map: []v1beta1.StoragePair{
+						{
+							Source:      ref.Ref{ID: keptDatastore},
+							Destination: v1beta1.DestinationStorage{StorageClass: storageClass},
+						},
+						{
+							Source:      ref.Ref{ID: csiDatastore},
+							Destination: v1beta1.DestinationStorage{StorageClass: storageClass},
+							OffloadPlugin: &v1beta1.OffloadPlugin{
+								CsiVolumeImport: &v1beta1.CsiVolumeImport{
+									SecretRef:            "csi-secret",
+									StorageVendorProduct: v1beta1.StorageVendorProductOntap,
+								},
+							},
+						},
+					},
+				},
+			}
+
+			pvcs, err := builder.CsiImportPVCs(ref.Ref{ID: vm.ID}, map[string]string{})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(pvcs).To(BeEmpty())
+		})
+
+		It("NetAppShiftPVCs should omit the excluded disk", func() {
+			vm := twoDiskVM()
+			builder := createBuilder()
+			builder.Plan.Spec.VMs[0].ExcludeDisks = []string{excludedBus}
+			_ = storagev1.AddToScheme(builder.Destination.Scheme())
+			_ = cdi.AddToScheme(builder.Destination.Scheme())
+			Expect(builder.Destination.Create(context.TODO(), &storagev1.StorageClass{
+				ObjectMeta: meta.ObjectMeta{
+					Name: storageClass,
+					Annotations: map[string]string{
+						v1beta1.AnnotationNetAppShiftStorageClassType: v1beta1.ValueNetAppShiftStorageClassType,
+					},
+				},
+			})).To(Succeed())
+			Expect(builder.Destination.Create(context.TODO(), &cdi.CDIConfig{
+				ObjectMeta: meta.ObjectMeta{Name: "config"},
+				Status: cdi.CDIConfigStatus{
+					FilesystemOverhead: &cdi.FilesystemOverhead{
+						Global: cdi.Percent("0.055"),
+					},
+				},
+			})).To(Succeed())
+			builder.Source.Inventory = &mockInventory{
+				ds: model.Datastore{
+					Resource:      model.Resource{ID: keptDatastore},
+					NasRemotePath: "/vol/share",
+					NasRemoteHost: "nfs.example.com",
+				},
+				vm: vm,
+			}
+			builder.Map.Storage = storageMap(keptDatastore, nil)
+
+			pvcs, err := builder.NetAppShiftPVCs(ref.Ref{ID: vm.ID}, map[string]string{"migration": "123"})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(pvcs).To(HaveLen(1))
+			Expect(pvcs[0].Annotations[planbase.AnnDiskSource]).To(Equal(keptDiskFile))
+			Expect(pvcs[0].Annotations[planbase.AnnNetAppShift]).To(Equal("true"))
+		})
+	})
+})
+
 //nolint:errcheck
 func createBuilder(objs ...runtime.Object) *Builder {
 	scheme := runtime.NewScheme()
 	_ = v1.AddToScheme(scheme)
 	_ = core.AddToScheme(scheme)
 	_ = rbacv1.AddToScheme(scheme)
+	_ = storagev1.AddToScheme(scheme)
 	v1beta1.SchemeBuilder.AddToScheme(scheme)
 	client := fake.NewClientBuilder().
 		WithScheme(scheme).

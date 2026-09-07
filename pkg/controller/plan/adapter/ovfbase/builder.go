@@ -118,7 +118,7 @@ func (r *Builder) DataVolumes(vmRef ref.Ref, secret *core.Secret, configMap *cor
 	}
 
 	diskIndex := 0
-	storageMapIn := r.Context.Map.Storage.Spec.Map
+	storageMapIn := r.Map.Storage.Spec.Map
 	for i := range storageMapIn {
 		mapped := &storageMapIn[i]
 		ref := mapped.Source
@@ -190,10 +190,10 @@ func (r *Builder) mapDataVolume(vm *model.VM, disk ovfmodel.Disk, destination ap
 }
 
 func updateDataVolumeAnnotations(dv *cdi.DataVolume, disk *ovfmodel.Disk) {
-	if dv.ObjectMeta.Annotations == nil {
-		dv.ObjectMeta.Annotations = make(map[string]string)
+	if dv.Annotations == nil {
+		dv.Annotations = make(map[string]string)
 	}
-	dv.ObjectMeta.Annotations[planbase.AnnDiskSource] = getDiskFullPath(disk)
+	dv.Annotations[planbase.AnnDiskSource] = getDiskFullPath(disk)
 }
 
 // Create the destination Kubevirt VM.
@@ -462,7 +462,7 @@ func (r *Builder) TemplateLabels(vmRef ref.Ref) (labels map[string]string, err e
 }
 
 func (r *Builder) ResolveDataVolumeIdentifier(dv *cdi.DataVolume) string {
-	return trimBackingFileName(dv.ObjectMeta.Annotations[planbase.AnnDiskSource])
+	return trimBackingFileName(dv.Annotations[planbase.AnnDiskSource])
 }
 
 // Return a stable identifier for a PersistentDataVolume.
@@ -582,6 +582,14 @@ func (r *Builder) NetAppShiftPVCs(vmRef ref.Ref, labels map[string]string) ([]co
 
 func (r *Builder) CsiImportPVCs(_ ref.Ref, _ map[string]string) ([]core.PersistentVolumeClaim, error) {
 	return nil, nil
+}
+
+func (r *Builder) AdoptDownloadCookieSecretOwner(_ *cdi.DataVolume) error {
+	return nil
+}
+
+func (r *Builder) RefreshImportCredentials(_ *cdi.DataVolume) (bool, error) {
+	return false, nil
 }
 
 func (r *Builder) SourceVMLabelsAndAnnotations(vmRef ref.Ref, tagMapping *api.TagMapping) (labels map[string]string, annotations map[string]string, sanitizationReport map[string]string, err error) {
