@@ -36,6 +36,68 @@ const (
 	Ignored = "ignored"
 )
 
+// Template label keys
+const (
+	templateOSLabel       = "os.template.kubevirt.io/%s"
+	templateWorkloadLabel = "workload.template.kubevirt.io/server"
+	templateFlavorLabel   = "flavor.template.kubevirt.io/medium"
+	redHatGuestOS         = "red hat"
+	centosGuestOS         = "centos"
+	defaultTemplateOS     = "rhel8.1"
+)
+
+// mapHypervGuestOS maps Hyper-V guest OS name strings (from KVP exchange) to
+// KubeVirt template OS identifiers.
+func mapHypervGuestOS(guestOS string) string {
+	os := strings.ToLower(guestOS)
+	switch {
+	case strings.Contains(os, "windows server 2022"):
+		return "win2k22"
+	case strings.Contains(os, "windows server 2019"):
+		return "win2k19"
+	case strings.Contains(os, "windows server 2016"):
+		return "win2k16"
+	case strings.Contains(os, "windows server 2012 r2"):
+		return "win2k12r2"
+	case strings.Contains(os, "windows server 2012"):
+		return "win2k12r2"
+	case strings.Contains(os, "windows 11"):
+		return "win11"
+	case strings.Contains(os, "windows 10"):
+		return "win10"
+	case strings.Contains(os, "windows"):
+		return "win10"
+	case strings.Contains(os, redHatGuestOS) && (strings.Contains(os, " 9.") || strings.Contains(os, " 9 ") || strings.HasSuffix(os, " 9")):
+		return "rhel9.4"
+	case strings.Contains(os, redHatGuestOS) && (strings.Contains(os, " 8.") || strings.Contains(os, " 8 ") || strings.HasSuffix(os, " 8")):
+		return defaultTemplateOS
+	case strings.Contains(os, redHatGuestOS) && (strings.Contains(os, " 7.") || strings.Contains(os, " 7 ") || strings.HasSuffix(os, " 7")):
+		return "rhel7.7"
+	case strings.Contains(os, redHatGuestOS):
+		return defaultTemplateOS
+	case strings.Contains(os, centosGuestOS) && (strings.Contains(os, " 9.") || strings.Contains(os, " 9 ") || strings.HasSuffix(os, " 9")):
+		return "centos-stream9"
+	case strings.Contains(os, centosGuestOS) && (strings.Contains(os, " 8.") || strings.Contains(os, " 8 ") || strings.HasSuffix(os, " 8")):
+		return "centos8"
+	case strings.Contains(os, centosGuestOS) && (strings.Contains(os, " 7.") || strings.Contains(os, " 7 ") || strings.HasSuffix(os, " 7")):
+		return "centos7.0"
+	case strings.Contains(os, centosGuestOS):
+		return "centos7.0"
+	case strings.Contains(os, "ubuntu"):
+		return "ubuntu18.04"
+	case strings.Contains(os, "debian"):
+		return "debian10"
+	case strings.Contains(os, "fedora"):
+		return "fedora31"
+	case strings.Contains(os, "suse") || strings.Contains(os, "sles"):
+		return "opensuse15.0"
+	case strings.Contains(os, "linux"):
+		return defaultTemplateOS
+	default:
+		return ""
+	}
+}
+
 type Builder struct {
 	*plancontext.Context
 }
@@ -333,10 +395,10 @@ func (r *Builder) mapDataVolume(vm *model.VM, disk hyperv.Disk, diskIndex int, d
 
 	dv := dvTemplate.DeepCopy()
 	dv.Spec = dvSpec
-	if dv.ObjectMeta.Annotations == nil {
-		dv.ObjectMeta.Annotations = make(map[string]string)
+	if dv.Annotations == nil {
+		dv.Annotations = make(map[string]string)
 	}
-	dv.ObjectMeta.Annotations[planbase.AnnDiskSource] = disk.ID
+	dv.Annotations[planbase.AnnDiskSource] = disk.ID
 
 	templateData := &api.PVCNameTemplateData{
 		VmName:       vm.Name,
@@ -354,8 +416,8 @@ func (r *Builder) mapDataVolume(vm *model.VM, disk hyperv.Disk, diskIndex int, d
 }
 
 func (r *Builder) getStorageClass() string {
-	if r.Context.Map.Storage != nil {
-		for _, pair := range r.Context.Map.Storage.Spec.Map {
+	if r.Map.Storage != nil {
+		for _, pair := range r.Map.Storage.Spec.Map {
 			return pair.Destination.StorageClass
 		}
 	}
@@ -385,14 +447,104 @@ func (r *Builder) Tasks(vmRef ref.Ref) (tasks []*plan.Task, err error) {
 	return
 }
 
-func (r *Builder) TemplateLabels(_ ref.Ref) (labels map[string]string, err error) {
+func (r *Builder) TemplateLabels(vmRef ref.Ref) (labels map[string]string, err error) {
+	// Prefer the OS detected by virt-v2v inspection (set during conversion).
+	var os string
+	for _, vmConf := range r.Migration.Status.VMs {
+		if vmConf.ID == vmRef.ID {
+			os = mapOperatingSystemToTemplate(vmConf.OperatingSystem)
+			break
+		}
+	}
+
+	// Fall back to inventory GuestOS from KVP Exchange (only available when
+	// the VM was running with Integration Services).
+	if os == "" {
+		vm := &model.VM{}
+		err = r.Source.Inventory.Find(vm, vmRef)
+		if err != nil {
+			err = liberr.Wrap(err, "vm", vmRef.String())
+			return
+		}
+		if vm.GuestOS != "" {
+			os = mapHypervGuestOS(vm.GuestOS)
+		}
+	}
+
+	if os == "" {
+		err = liberr.New("guest OS not detected, cannot determine template")
+		return
+	}
+
 	labels = make(map[string]string)
+	labels[fmt.Sprintf(templateOSLabel, os)] = "true"
+	labels[templateWorkloadLabel] = "true"
+	labels[templateFlavorLabel] = "true"
+
 	return
 }
 
+func mapOperatingSystemToTemplate(operatingSystem string) string {
+	if operatingSystem == "" {
+		return ""
+	}
+	os := strings.ToLower(operatingSystem)
+	switch {
+	// Windows Server
+	case strings.Contains(os, "2022srvnext"):
+		return "win2k25"
+	case strings.Contains(os, "2019srvnext"):
+		return "win2k22"
+	case strings.Contains(os, "2019"):
+		return "win2k19"
+	case strings.Contains(os, "windows9server"):
+		return "win2k16"
+	case strings.Contains(os, "windows8server"):
+		return "win2k12r2"
+	case strings.Contains(os, "windows7server"):
+		return "win2k8r2"
+	// Windows desktop
+	case strings.Contains(os, "windows12"):
+		return "win11"
+	case strings.Contains(os, "windows11"):
+		return "win11"
+	case strings.Contains(os, "windows9") || strings.Contains(os, "windows10"):
+		return "win10"
+	case strings.Contains(os, "windows"):
+		return "win10"
+	// Linux distributions
+	case strings.Contains(os, "rhel10"):
+		return "rhel10.0"
+	case strings.Contains(os, "rhel9"):
+		return "rhel9.4"
+	case strings.Contains(os, "rhel8"):
+		return defaultTemplateOS
+	case strings.Contains(os, "rhel7"):
+		return "rhel7.7"
+	case strings.Contains(os, "centos9") || strings.Contains(os, "centosstream9"):
+		return "centos-stream9"
+	case strings.Contains(os, "centos8"):
+		return "centos8"
+	case strings.Contains(os, "centos"):
+		return "centos7.0"
+	case strings.Contains(os, "ubuntu"):
+		return "ubuntu18.04"
+	case strings.Contains(os, "debian"):
+		return "debian10"
+	case strings.Contains(os, "fedora"):
+		return "fedora31"
+	case strings.Contains(os, "sles") || strings.Contains(os, "suse") || strings.Contains(os, "opensuse"):
+		return "opensuse15.0"
+	case strings.Contains(os, "linux"):
+		return defaultTemplateOS
+	default:
+		return ""
+	}
+}
+
 func (r *Builder) ResolveDataVolumeIdentifier(dv *cdi.DataVolume) string {
-	if dv.ObjectMeta.Annotations != nil {
-		if id, ok := dv.ObjectMeta.Annotations[planbase.AnnDiskSource]; ok {
+	if dv.Annotations != nil {
+		if id, ok := dv.Annotations[planbase.AnnDiskSource]; ok {
 			return id
 		}
 	}
@@ -406,6 +558,12 @@ func (r *Builder) ResolvePersistentVolumeClaimIdentifier(pvc *core.PersistentVol
 		}
 	}
 	return pvc.Name
+}
+
+func nicRefsFromVM(vm *model.VM) []planbase.NICRef {
+	return planbase.NICRefsFrom(vm.NICs, func(n hyperv.NIC) planbase.NICRef {
+		return planbase.NICRef{MAC: n.MAC, NetworkID: n.Network.ID}
+	})
 }
 
 func (r *Builder) PodEnvironment(vmRef ref.Ref, sourceSecret *core.Secret) (env []core.EnvVar, err error) {
@@ -429,14 +587,15 @@ func (r *Builder) PodEnvironment(vmRef ref.Ref, sourceSecret *core.Secret) (env 
 		core.EnvVar{Name: "V2V_diskPath", Value: strings.Join(diskPaths, ",")},
 	)
 
-	if r.Plan.Spec.PreserveStaticIPs {
-		macsToIps := r.mapMacStaticIps(vm)
+	modeByMAC := planbase.ResolveNICModes(nicRefsFromVM(vm), r.Map.Network, r.Plan.Spec.PreserveStaticIPs)
+	if planbase.HasPreserveMode(modeByMAC) {
+		macsToIps := r.mapMacStaticIps(vm, modeByMAC)
 		if macsToIps != "" {
 			env = append(env,
 				core.EnvVar{Name: "V2V_staticIPs", Value: macsToIps},
 			)
 		}
-		if hasMultipleStaticIPsPerNIC(vm) {
+		if hasMultipleStaticIPsPerNIC(vm, modeByMAC) {
 			env = append(env, core.EnvVar{
 				Name:  "V2V_multipleIPsPerNic",
 				Value: "true",
@@ -451,12 +610,15 @@ func (r *Builder) PodEnvironment(vmRef ref.Ref, sourceSecret *core.Secret) (env 
 	return
 }
 
-func hasMultipleStaticIPsPerNIC(vm *model.VM) bool {
+func hasMultipleStaticIPsPerNIC(vm *model.VM, modeByMAC map[string]string) bool {
 	if !isWindows(vm) {
 		return false
 	}
 	var manualMACs []string
 	for _, gn := range vm.GuestNetworks {
+		if mode, ok := modeByMAC[gn.MAC]; ok && mode != string(api.NetworkIPModePreserve) {
+			continue
+		}
 		if gn.Origin == hyperv.OriginManual {
 			manualMACs = append(manualMACs, gn.MAC)
 		}
@@ -464,12 +626,15 @@ func hasMultipleStaticIPsPerNIC(vm *model.VM) bool {
 	return planbase.HasMultipleIPsPerMAC(manualMACs)
 }
 
-func (r *Builder) mapMacStaticIps(vm *model.VM) string {
+func (r *Builder) mapMacStaticIps(vm *model.VM, modeByMAC map[string]string) string {
 	isWin := isWindows(vm)
 	networks := planbase.SortedIPv4First(vm.GuestNetworks, func(gn hyperv.GuestNetwork) string { return gn.IP })
 
 	var configurations []string
 	for _, gn := range networks {
+		if mode, ok := modeByMAC[gn.MAC]; ok && mode != string(api.NetworkIPModePreserve) {
+			continue
+		}
 		if !isWin || gn.Origin == hyperv.OriginManual {
 			ip := net.ParseIP(gn.IP)
 			if ip == nil {
@@ -559,6 +724,14 @@ func (r *Builder) NetAppShiftPVCs(vmRef ref.Ref, labels map[string]string) ([]co
 
 func (r *Builder) CsiImportPVCs(_ ref.Ref, _ map[string]string) ([]core.PersistentVolumeClaim, error) {
 	return nil, nil
+}
+
+func (r *Builder) AdoptDownloadCookieSecretOwner(_ *cdi.DataVolume) error {
+	return nil
+}
+
+func (r *Builder) RefreshImportCredentials(_ *cdi.DataVolume) (bool, error) {
+	return false, nil
 }
 
 func (r *Builder) SourceVMLabelsAndAnnotations(vmRef ref.Ref, tagMapping *api.TagMapping) (labels map[string]string, annotations map[string]string, sanitizationReport map[string]string, err error) {
