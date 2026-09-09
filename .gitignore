@@ -7,6 +7,11 @@
 *.dylib
 bin
 
+# Go binaries named after their directory, produced by `go build ./...` inside a
+# module. These are local artifacts and must never be committed.
+cmd/kubectl-mtv/kubectl-mtv
+cmd/vsphere-copy-offload-populator/vsphere-copy-offload-populator
+
 # Test binary, build with `go test -c`
 *.test
 
