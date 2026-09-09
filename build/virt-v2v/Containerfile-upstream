@@ -24,8 +24,11 @@ ENV LIBGUESTFS_DEBUG=1 LIBGUESTFS_TRACE=1
 
 RUN mkdir /disks && \
     source /etc/os-release && \
-    dnf install -y \
-        virt-v2v && \
+    dnf update -y && \
+    dnf install -y --setopt=install_weak_deps=0 \
+        virt-v2v \
+        libvirt-daemon-config-network \
+        passt && \
     dnf clean all
 
 # TODO: This should be replaced with `dnf install -y virtio-win` from centos-stream10
