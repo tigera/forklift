@@ -1,4 +1,4 @@
-FROM registry.access.redhat.com/ubi9/go-toolset:1.25.9-1778604137 AS builder
+FROM registry.access.redhat.com/ubi9/go-toolset:1.26 AS builder
 USER root
 WORKDIR /usr/src/app
 
@@ -14,11 +14,11 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 
 RUN make vmkfstools-wrapper
 
-FROM registry.access.redhat.com/ubi9-minimal:9.7-1778562320
+FROM registry.access.redhat.com/ubi9-minimal:latest
 
 # Update packages to address security vulnerabilities (CVE fixes)
-RUN microdnf update -y && \
-    microdnf clean all
+RUN microdnf -y update && \
+    microdnf -y clean all
 
 COPY --from=builder /usr/src/app/cmd/vsphere-copy-offload-populator/bin/vsphere-copy-offload-populator \
     /bin/vsphere-copy-offload-populator
