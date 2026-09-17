@@ -9,7 +9,8 @@ ARG VERSION="99.0.0"
 ARG OPERATOR_BUNDLE_IMAGE
 ARG OPM_OPTS
 
-RUN microdnf -y install gettext && \
+RUN microdnf -y update && \
+    microdnf -y install gettext && \
     microdnf -y clean all
 
 COPY --from=opm /bin/opm /bin/opm
