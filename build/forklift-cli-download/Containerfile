@@ -20,6 +20,11 @@ FROM registry.access.redhat.com/ubi9/nginx-126:latest
 USER 0
 RUN dnf -y update && \
     dnf -y clean all
+# The nginx RPM owns /var/log/nginx as root:root 0711, so updating that package
+# discards the base image's chown to 1001:0 and nginx can no longer open its
+# logs. Restore the ownership the base image set.
+RUN chown -R 1001:0 /var/log/nginx && \
+    chmod -R g+rwX /var/log/nginx
 USER 1001
 
 # Copy cross-compiled binaries for all platforms (linux, darwin, windows)
