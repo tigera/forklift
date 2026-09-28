@@ -18,6 +18,9 @@ RUN --mount=type=cache,target=${GOCACHE},uid=1001 make build-mcp
 FROM registry.access.redhat.com/ubi9/nginx-126:latest
 
 USER 0
+# BUILD_DATE differs on every build, so declaring it here re-runs the package
+# update rather than reusing a cached layer from an earlier build.
+ARG BUILD_DATE=unknown
 RUN dnf -y update && \
     dnf -y clean all
 # The nginx RPM owns /var/log/nginx as root:root 0711, so updating that package
@@ -48,7 +51,6 @@ EXPOSE 8443 8081
 CMD ["/usr/libexec/s2i/run"]
 
 ARG GIT_COMMIT=unknown
-ARG BUILD_DATE=unknown
 
 LABEL \
         com.redhat.component="mtv-cli-download-container" \

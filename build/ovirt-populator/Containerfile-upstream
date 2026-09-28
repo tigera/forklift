@@ -10,13 +10,15 @@ RUN go build -o ovirt-populator github.com/kubev2v/forklift/cmd/ovirt-populator
 FROM quay.io/centos/centos:stream9
 COPY --from=builder /app/ovirt-populator /usr/local/bin/ovirt-populator
 RUN dnf install -y centos-release-ovirt45
+# BUILD_DATE differs on every build, so declaring it here re-runs the package
+# update rather than reusing a cached layer from an earlier build.
+ARG BUILD_DATE=unknown
 RUN dnf update -y && \
     dnf install -y python3-ovirt-engine-sdk4 ovirt-imageio-client && \
     dnf clean all
 
 ENTRYPOINT ["/usr/local/bin/ovirt-populator"]
 ARG GIT_COMMIT=unknown
-ARG BUILD_DATE=unknown
 
 LABEL \
         com.redhat.component="forklift-ovirt-populator-container" \

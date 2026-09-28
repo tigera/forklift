@@ -15,6 +15,9 @@ RUN go build -buildvcs=false -ldflags="-w -s" -o /tmp/opa github.com/open-policy
 
 FROM registry.access.redhat.com/ubi9-minimal:latest
 
+# BUILD_DATE differs on every build, so declaring it here re-runs the package
+# update rather than reusing a cached layer from an earlier build.
+ARG BUILD_DATE=unknown
 RUN microdnf -y update && \
     microdnf -y clean all
 
@@ -25,7 +28,6 @@ COPY --from=mtv-opa /tmp/opa /usr/bin/opa
 ENTRYPOINT ["/usr/bin/entrypoint.sh"]
 
 ARG GIT_COMMIT=unknown
-ARG BUILD_DATE=unknown
 
 LABEL \
         com.redhat.component="mtv-validation-container" \
