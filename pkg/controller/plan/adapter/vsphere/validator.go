@@ -2,7 +2,6 @@ package vsphere
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"net"
 	"strings"
@@ -19,10 +18,12 @@ import (
 	"github.com/kubev2v/forklift/pkg/controller/provider/web/base"
 	model "github.com/kubev2v/forklift/pkg/controller/provider/web/vsphere"
 	"github.com/kubev2v/forklift/pkg/controller/validation"
+	calicoclient "github.com/kubev2v/forklift/pkg/lib/client/calico"
 	liberr "github.com/kubev2v/forklift/pkg/lib/error"
 	"github.com/vmware/govmomi/vim25/types"
 	core "k8s.io/api/core/v1"
-	"sigs.k8s.io/controller-runtime/pkg/client"
+	k8stypes "k8s.io/apimachinery/pkg/types"
+	k8sclient "sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 const (
@@ -303,7 +304,7 @@ func (r *Validator) shouldMigrateSharedDisks(vm *model.VM) bool {
 	return r.Plan.Spec.MigrateSharedDisks
 }
 
-func (r *Validator) SharedDisks(vmRef ref.Ref, client client.Client) (ok bool, msg string, category string, err error) {
+func (r *Validator) SharedDisks(vmRef ref.Ref, client k8sclient.Client) (ok bool, msg string, category string, err error) {
 	vm := &model.VM{}
 	err = r.Source.Inventory.Find(vm, vmRef)
 	if err != nil {
@@ -487,8 +488,8 @@ func rootDiskExcluded(vm *model.VM, rootDiskSpec string, exclude []string) (bus 
 	return root.BusAddress, excluded
 }
 
-func (r *Validator) getUdnSubnet(k8sClient client.Client) (string, error) {
-	key := client.ObjectKey{
+func (r *Validator) getUdnSubnet(k8sClient k8sclient.Client) (string, error) {
+	key := k8sclient.ObjectKey{
 		Name: r.Plan.Spec.TargetNamespace,
 	}
 	namespace := &core.Namespace{}
@@ -502,9 +503,9 @@ func (r *Validator) getUdnSubnet(k8sClient client.Client) (string, error) {
 	}
 
 	nadList := &k8snet.NetworkAttachmentDefinitionList{}
-	listOpts := []client.ListOption{
-		client.InNamespace(r.Plan.Spec.TargetNamespace),
-		client.MatchingLabels{nadLabelUDN: ""},
+	listOpts := []k8sclient.ListOption{
+		k8sclient.InNamespace(r.Plan.Spec.TargetNamespace),
+		k8sclient.MatchingLabels{nadLabelUDN: ""},
 	}
 
 	err = k8sClient.List(context.TODO(), nadList, listOpts...)
@@ -512,8 +513,7 @@ func (r *Validator) getUdnSubnet(k8sClient client.Client) (string, error) {
 		return "", err
 	}
 	for _, nad := range nadList.Items {
-		var networkConfig ocpmodel.NetworkConfig
-		err = json.Unmarshal([]byte(nad.Spec.Config), &networkConfig)
+		networkConfig, err := ocpmodel.ParseNAD(&nad)
 		if err != nil {
 			r.Log.Info("Skipping NAD: failed to parse network config", "namespace", nad.Namespace, "name", nad.Name, "error", err.Error())
 			continue
@@ -549,7 +549,7 @@ func (r *Validator) getSourceNetworkForPodNetworkTarget(vmRef ref.Ref) (net *mod
 	return
 }
 
-func (r *Validator) UdnStaticIPs(vmRef ref.Ref, client client.Client) (ok bool, err error) {
+func (r *Validator) UdnStaticIPs(vmRef ref.Ref, client k8sclient.Client) (ok bool, err error) {
 	// Check static IPs
 	if !r.Plan.DestinationHasUdnNetwork(client) {
 		return true, nil
@@ -728,4 +728,199 @@ func (r *Validator) ConsolidationNeeded(vmRef ref.Ref) (needed bool, err error) 
 		return
 	}
 	return vm.ConsolidationNeeded, nil
+}
+
+// CalicoVMIssues returns per-VM Calico issues for vmRef using the cache
+// from ValidateCalicoNADs.
+//
+// Issues are deduplicated by {Kind, Network, VLAN, IP}, so two NICs
+// hitting the same failure mode yield a single issue.
+func (r *Validator) CalicoVMIssues(vmRef ref.Ref, cache *planbase.CalicoValidationCache) ([]planbase.CalicoIssue, error) {
+	if !r.Plan.Spec.PreserveStaticIPs {
+		return nil, nil
+	}
+	if cache == nil || len(cache.NADs) == 0 {
+		return nil, nil
+	}
+	if r.Plan.Referenced.Map.Network == nil {
+		return nil, nil
+	}
+	vm := &model.VM{}
+	if err := r.Source.Inventory.Find(vm, vmRef); err != nil {
+		return nil, liberr.Wrap(err, "vm", vmRef.String())
+	}
+
+	var issues []planbase.CalicoIssue
+	seen := map[planbase.CalicoIssue]struct{}{}
+	emit := func(i planbase.CalicoIssue) {
+		if _, ok := seen[i]; ok {
+			return
+		}
+		seen[i] = struct{}{}
+		issues = append(issues, i)
+	}
+	nadPool := planbase.NewNADPool()
+	nicKeys, pairsBySource, err := r.buildNICResolver(vm.NICs)
+	if err != nil {
+		return nil, liberr.Wrap(err, "vm", vmRef)
+	}
+
+	for i, nic := range vm.NICs {
+		pair, allocated := planbase.AllocateNetwork(nadPool, pairsBySource[nicKeys[i]])
+		if !allocated || pair.Destination.Type != planbase.Multus {
+			continue
+		}
+		key := k8stypes.NamespacedName{
+			Namespace: pair.Destination.Namespace,
+			Name:      pair.Destination.Name,
+		}
+		resolved, ok := cache.NADs[key]
+		if !ok {
+			continue
+		}
+		issueBase := planbase.CalicoIssue{Network: resolved.Network, VLAN: resolved.VLAN.VID}
+		ips := findInterfaceIps(vm, nic)
+		if len(ips) > 1 {
+			multi := issueBase
+			multi.Kind = planbase.CalicoIssueTooManyIPs
+			multi.IP = strings.Join(ips, ",")
+			emit(multi)
+			continue
+		}
+		for _, ip := range ips {
+			perIP := issueBase
+			perIP.IP = ip
+			if resolved.IsVRF {
+				if calicoclient.L3EligiblePoolForIP(resolved.EligiblePools, ip) == nil {
+					perIP.Kind = planbase.CalicoIssueIPNotInIPPool
+					emit(perIP)
+				}
+				continue
+			}
+			if !ipInAnySubnet(ip, resolved.VLAN.Subnets) {
+				perIP.Kind = planbase.CalicoIssueIPNotInSubnet
+				emit(perIP)
+				continue
+			}
+			if calicoclient.L2WorkloadEligiblePoolForIP(resolved.EligiblePools, ip, resolved.VLAN.Subnets) == nil {
+				perIP.Kind = planbase.CalicoIssueIPNotInIPPool
+				emit(perIP)
+			}
+		}
+	}
+	return issues, nil
+}
+
+// CalicoPrimaryIssues returns per-VM Calico-primary issues for vmRef using
+// the cache from ValidateCalicoPrimary.
+func (r *Validator) CalicoPrimaryIssues(vmRef ref.Ref, cache *planbase.CalicoPrimaryValidationCache) ([]planbase.CalicoPrimaryIssue, error) {
+	if !r.Plan.Spec.PreserveStaticIPs {
+		return nil, nil
+	}
+	if cache == nil || cache.Primary == nil {
+		return nil, nil
+	}
+	if r.Plan.Referenced.Map.Network == nil {
+		return nil, nil
+	}
+	vm := &model.VM{}
+	if err := r.Source.Inventory.Find(vm, vmRef); err != nil {
+		return nil, liberr.Wrap(err, "vm", vmRef.String())
+	}
+
+	primary := cache.Primary
+	var issues []planbase.CalicoPrimaryIssue
+	seen := map[planbase.CalicoPrimaryIssue]struct{}{}
+	emit := func(i planbase.CalicoPrimaryIssue) {
+		if _, ok := seen[i]; ok {
+			return
+		}
+		seen[i] = struct{}{}
+		issues = append(issues, i)
+	}
+	nadPool := planbase.NewNADPool()
+	nicKeys, pairsBySource, err := r.buildNICResolver(vm.NICs)
+	if err != nil {
+		return nil, liberr.Wrap(err, "vm", vmRef.String())
+	}
+
+	for i, nic := range vm.NICs {
+		pair, allocated := planbase.AllocateNetwork(nadPool, pairsBySource[nicKeys[i]])
+		if !allocated || pair.Destination.Type != planbase.Pod || pair.Destination.Calico == nil {
+			continue
+		}
+		issueBase := planbase.CalicoPrimaryIssue{VMRef: vmRef, Network: primary.Network, VLAN: primary.VLAN.VID}
+		ips := findInterfaceIps(vm, nic)
+		if len(ips) > 1 {
+			multi := issueBase
+			multi.Kind = planbase.CalicoIssuePrimaryTooManyIPs
+			multi.IP = strings.Join(ips, ",")
+			emit(multi)
+			continue
+		}
+		for _, ip := range ips {
+			perIP := issueBase
+			perIP.IP = ip
+			if primary.Network == "" {
+				// Non-L2 case: implicit L3 IPAM; the pool must cover the IP.
+				if calicoclient.L3EligiblePoolForIP(primary.L3EligiblePools, ip) == nil {
+					perIP.Kind = planbase.CalicoIssuePrimaryNoEligibleIPPool
+					emit(perIP)
+				}
+				continue
+			}
+			// L2-attach case: IP must be in the matched VLAN subnet AND covered by an
+			// L2Workload pool.
+			if !ipInAnySubnet(ip, primary.VLAN.Subnets) {
+				perIP.Kind = planbase.CalicoIssuePrimaryIPNotInSubnet
+				emit(perIP)
+				continue
+			}
+			if calicoclient.L2WorkloadEligiblePoolForIP(primary.L2EligiblePools, ip, primary.VLAN.Subnets) == nil {
+				perIP.Kind = planbase.CalicoIssuePrimaryNoEligibleIPPool
+				emit(perIP)
+			}
+		}
+	}
+	return issues, nil
+}
+
+// buildNICResolver indexes the NetworkMap pairs by source-network ID and Key
+// so a per-NIC lookup returns every candidate destination. Mirrors the
+// Builder's resolver so the Validator validates exactly what the Builder
+// will allocate.
+func (r *Validator) buildNICResolver(nics []vsphere.NIC) ([]string, map[string][]api.NetworkPair, error) {
+	pairsBySource := map[string][]api.NetworkPair{}
+	for _, pair := range r.Plan.Referenced.Map.Network.Spec.Map {
+		network := &model.Network{}
+		if err := r.Source.Inventory.Find(network, pair.Source.Ref); err != nil {
+			return nil, nil, liberr.Wrap(err, "buildNICResolver, source", pair.Source.String())
+		}
+		if network.Variant == vsphere.NetDvPortGroup || network.Variant == vsphere.OpaqueNetwork {
+			pairsBySource[network.Key] = append(pairsBySource[network.Key], pair)
+		}
+		pairsBySource[network.ID] = append(pairsBySource[network.ID], pair)
+	}
+	nicKeys := make([]string, len(nics))
+	for i, nic := range nics {
+		nicKeys[i] = nic.Network.ID
+	}
+	return nicKeys, pairsBySource, nil
+}
+
+func ipInAnySubnet(ip string, subnets []string) bool {
+	parsed := net.ParseIP(ip)
+	if parsed == nil {
+		return false
+	}
+	for _, s := range subnets {
+		_, n, err := net.ParseCIDR(s)
+		if err != nil {
+			continue
+		}
+		if n.Contains(parsed) {
+			return true
+		}
+	}
+	return false
 }

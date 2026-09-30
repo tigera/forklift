@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/md5"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
@@ -66,6 +65,13 @@ const (
 	VMMultiplePodNetworkMappings    = "VMMultiplePodNetworkMappings"
 	VMMissingGuestIPs               = "VMMissingGuestIPs"
 	VMIpNotMatchingUdnSubnet        = "VMIpNotMatchingUdnSubnet"
+	CalicoNetworkInvalid            = "CalicoNetworkInvalid"
+	CalicoNetworkWarning            = "CalicoNetworkWarning"
+	CalicoPrimaryInvalid            = "CalicoPrimaryInvalid"
+	CalicoPrimaryWarning            = "CalicoPrimaryWarning"
+	VMIpNotInCalicoSubnet           = "VMIpNotInCalicoSubnet"
+	VMIpNotInCalicoIPPool           = "VMIpNotInCalicoIPPool"
+	VMTooManyIPsForCalico           = "VMTooManyIPsForCalico"
 	VMMissingChangedBlockTracking   = "VMMissingChangedBlockTracking"
 	VMHasSnapshots                  = "VMHasSnapshots"
 	VMConsolidationNeeded           = "VMConsolidationNeeded"
@@ -214,6 +220,16 @@ func (r *Reconciler) validate(plan *api.Plan) error {
 		return err
 	}
 
+	calicoCache, err := r.validateCalicoNetwork(ctx)
+	if err != nil {
+		return err
+	}
+
+	calicoPrimaryResult, err := r.validateCalicoPrimary(ctx)
+	if err != nil {
+		return err
+	}
+
 	err = r.validateNetAppShift(ctx)
 	if err != nil {
 		return err
@@ -227,7 +243,7 @@ func (r *Reconciler) validate(plan *api.Plan) error {
 		return err
 	}
 
-	if err = r.validateVM(plan, ctx); err != nil {
+	if err = r.validateVM(plan, ctx, calicoCache, calicoPrimaryResult); err != nil {
 		return err
 	}
 
@@ -518,8 +534,7 @@ func (r *Reconciler) validateUserDefinedNetwork(ctx *plancontext.Context) (err e
 	}
 
 	for _, nad := range nads.Items {
-		var networkConfig model.NetworkConfig
-		err = json.Unmarshal([]byte(nad.Spec.Config), &networkConfig)
+		networkConfig, err := model.ParseNAD(&nad)
 		if err != nil {
 			r.Log.Info("Skipping NAD: failed to parse network config", "namespace", nad.Namespace, "name", nad.Name, "error", err.Error())
 			continue
@@ -539,6 +554,100 @@ func (r *Reconciler) validateUserDefinedNetwork(ctx *plancontext.Context) (err e
 		}
 	}
 	return
+}
+
+// validateCalicoNetwork validates every Calico-referencing NAD referenced by
+// the plan's network map. Resource-level issues (Network CR missing, no
+// l2Bridge, no eligible IPPool, etc.) are surfaced as a plan-level
+// CalicoNetworkInvalid condition whose items are the offending NAD
+// references. Healthy NADs are returned in a cache for per-VM checks.
+func (r *Reconciler) validateCalicoNetwork(ctx *plancontext.Context) (*planbase.CalicoValidationCache, error) {
+	provider := ctx.Plan.Referenced.Provider.Source
+	if provider == nil || provider.Type() != api.VSphere {
+		return nil, nil
+	}
+	if ctx.Plan.Referenced.Map.Network == nil {
+		return nil, nil
+	}
+	// Map-scoped issues are surfaced as NetworkMap conditions by the
+	// NetworkMap controller; this pass only rebuilds the cache the per-VM
+	// checks read from and evaluates the plan-scoped concerns.
+	result, err := planbase.ValidateCalicoNADs(
+		context.TODO(), ctx.Destination.Client,
+		ctx.Plan.Referenced.Map.Network.Spec.Map, r.Log)
+	if err != nil {
+		return nil, err
+	}
+	planHasPlacement := len(ctx.Plan.Spec.TargetNodeSelector) > 0 || ctx.Plan.Spec.TargetAffinity != nil
+	criticals, warnings := planbase.CalicoNADPlanIssues(
+		result.Cache, ctx.Plan.Spec.PreserveStaticIPs, planHasPlacement)
+	if cond, ok := planbase.BuildCalicoNADCondition(
+		CalicoNetworkInvalid, api.CategoryCritical,
+		"One or more Calico Network destinations are invalid",
+		criticals,
+	); ok {
+		ctx.Plan.Status.SetCondition(cond)
+	}
+	if cond, ok := planbase.BuildCalicoNADCondition(
+		CalicoNetworkWarning, api.CategoryWarn,
+		"One or more Calico NADs will not receive identity preservation",
+		warnings,
+	); ok {
+		ctx.Plan.Status.SetCondition(cond)
+	}
+	return result.Cache, nil
+}
+
+// validateCalicoPrimary validates the calico-flagged NetworkMap entry (a
+// type: pod destination carrying the calico field), if any.
+// Emits the Warn-class CalicoPrimaryWarning condition immediately since
+// warnings are plan-scoped. The Critical CalicoPrimaryInvalid condition is
+// deferred to validateVM, which appends per-VM issues onto the same result
+// so both layers fold into a single condition.
+func (r *Reconciler) validateCalicoPrimary(ctx *plancontext.Context) (*planbase.CalicoPrimaryValidationResult, error) {
+	provider := ctx.Plan.Referenced.Provider.Source
+	if provider == nil || provider.Type() != api.VSphere {
+		return &planbase.CalicoPrimaryValidationResult{}, nil
+	}
+	if ctx.Plan.Referenced.Map.Network == nil {
+		return &planbase.CalicoPrimaryValidationResult{}, nil
+	}
+	pairs := ctx.Plan.Referenced.Map.Network.Spec.Map
+	// Map-scoped issues are surfaced as NetworkMap conditions by the
+	// NetworkMap controller; this pass only rebuilds the cache the per-VM
+	// checks read from and evaluates the plan-scoped concerns.
+	result, err := planbase.ValidateCalicoPrimary(
+		context.TODO(), ctx.Destination.Client, pairs, r.Log)
+	if err != nil {
+		return nil, err
+	}
+	result.Issues = nil
+	result.Warnings = nil
+	if planbase.HasCalicoPodEntry(pairs) && !ctx.Plan.Spec.PreserveStaticIPs {
+		result.Warnings = append(result.Warnings, planbase.CalicoPrimaryIssue{
+			Kind: planbase.CalicoIssuePrimaryStaticIPsNotPreserved,
+		})
+	}
+	// The UDN conflict depends on the plan's target namespace, so it stays a
+	// plan-level Critical; it also invalidates the cache so per-VM checks
+	// and the deferred CalicoPrimaryInvalid fold treat the entry as failed.
+	if result.Cache != nil && result.Cache.Primary != nil && ctx.Plan.DestinationHasUdnNetwork(ctx.Destination.Client) {
+		primary := result.Cache.Primary
+		result.Issues = append(result.Issues, planbase.CalicoPrimaryIssue{
+			Kind:    planbase.CalicoIssuePrimaryConflictsWithUDN,
+			Network: primary.Network,
+			VLAN:    primary.VLAN.VID,
+		})
+		result.Cache.Primary = nil
+	}
+	if cond, ok := planbase.BuildCalicoPrimaryCondition(
+		CalicoPrimaryWarning, api.CategoryWarn,
+		"The Calico primary-network mapping has informational warnings",
+		result.Warnings,
+	); ok {
+		ctx.Plan.Status.SetCondition(cond)
+	}
+	return &result, nil
 }
 
 func (r *Reconciler) getDestinationNamespaceNads(ctx *plancontext.Context) (*k8snet.NetworkAttachmentDefinitionList, error) {
@@ -598,7 +707,10 @@ func (r *Reconciler) validateNetworkMap(plan *api.Plan) (err error) {
 	if plan.Provider.Source != nil && plan.Provider.Source.SupportsPreserveStaticIps() && plan.Spec.PreserveStaticIPs {
 		var hasMappingToPodNetwork bool
 		for _, networkMap := range mp.Spec.Map {
-			if networkMap.Destination.Type == Pod {
+			// A calico-flagged pod entry preserves the VM's IP on the pod
+			// network (that is the feature), so the masquerade warning
+			// below does not apply to it.
+			if networkMap.Destination.Type == Pod && networkMap.Destination.Calico == nil {
 				hasMappingToPodNetwork = true
 				break
 			}
@@ -719,7 +831,7 @@ func aggregateWarningConcerns(v interface{}, vmRef string, unsupportedOVFExportS
 }
 
 // Validate listed VMs.
-func (r *Reconciler) validateVM(plan *api.Plan, ctx *plancontext.Context) error {
+func (r *Reconciler) validateVM(plan *api.Plan, ctx *plancontext.Context, calicoCache *planbase.CalicoValidationCache, calicoPrimaryResult *planbase.CalicoPrimaryValidationResult) error {
 	if plan.Status.HasCondition(Executing) {
 		return nil
 	}
@@ -817,6 +929,30 @@ func (r *Reconciler) validateVM(plan *api.Plan, ctx *plancontext.Context) error 
 		Reason:   NotValid,
 		Category: api.CategoryWarn,
 		Message:  "VM IP does not match with the primary UDN subnet",
+		Items:    []string{},
+	}
+	vmIpNotInCalicoSubnet := libcnd.Condition{
+		Type:     VMIpNotInCalicoSubnet,
+		Status:   True,
+		Reason:   NotValid,
+		Category: api.CategoryCritical,
+		Message:  "VM static IP does not fall within any subnet of the mapped Calico Network VLAN.",
+		Items:    []string{},
+	}
+	vmIpNotInCalicoIPPool := libcnd.Condition{
+		Type:     VMIpNotInCalicoIPPool,
+		Status:   True,
+		Reason:   NotValid,
+		Category: api.CategoryCritical,
+		Message:  "VM static IP is within the Calico Network VLAN subnet but no IPPool covers it.",
+		Items:    []string{},
+	}
+	vmTooManyIPsForCalico := libcnd.Condition{
+		Type:     VMTooManyIPsForCalico,
+		Status:   True,
+		Reason:   NotValid,
+		Category: api.CategoryCritical,
+		Message:  "VM NIC has more than one IPv4 address; Calico static IP preservation supports at most one IPv4 per interface.",
 		Items:    []string{},
 	}
 	missingCbtForWarm := libcnd.Condition{
@@ -1303,6 +1439,39 @@ func (r *Reconciler) validateVM(plan *api.Plan, ctx *plancontext.Context) error 
 				vmIpDoesNotMatchUdnSubnet.Items = append(vmIpDoesNotMatchUdnSubnet.Items, ref.String())
 			}
 		}
+		calicoIssues, err := validator.CalicoVMIssues(*ref, calicoCache)
+		if err != nil {
+			return err
+		}
+		addedSubnet, addedPool, addedTooMany := false, false, false
+		for _, issue := range calicoIssues {
+			switch issue.Kind {
+			case planbase.CalicoIssueIPNotInSubnet:
+				if !addedSubnet {
+					vmIpNotInCalicoSubnet.Items = append(vmIpNotInCalicoSubnet.Items, ref.String())
+					addedSubnet = true
+				}
+			case planbase.CalicoIssueIPNotInIPPool:
+				if !addedPool {
+					vmIpNotInCalicoIPPool.Items = append(vmIpNotInCalicoIPPool.Items, ref.String())
+					addedPool = true
+				}
+			case planbase.CalicoIssueTooManyIPs:
+				if !addedTooMany {
+					vmTooManyIPsForCalico.Items = append(vmTooManyIPsForCalico.Items, ref.String())
+					addedTooMany = true
+				}
+			}
+		}
+		// Per-VM Calico-primary issues fold into the same Critical condition
+		// as the plan-level ones; the condition is emitted after this loop.
+		if calicoPrimaryResult != nil {
+			primaryIssues, err := validator.CalicoPrimaryIssues(*ref, calicoPrimaryResult.Cache)
+			if err != nil {
+				return err
+			}
+			calicoPrimaryResult.Issues = append(calicoPrimaryResult.Issues, primaryIssues...)
+		}
 		// Destination.
 		provider = plan.Provider.Destination
 		if provider == nil {
@@ -1432,6 +1601,26 @@ func (r *Reconciler) validateVM(plan *api.Plan, ctx *plancontext.Context) error 
 	}
 	if len(vmIpDoesNotMatchUdnSubnet.Items) > 0 {
 		plan.Status.SetCondition(vmIpDoesNotMatchUdnSubnet)
+	}
+	if len(vmIpNotInCalicoSubnet.Items) > 0 {
+		plan.Status.SetCondition(vmIpNotInCalicoSubnet)
+	}
+	if len(vmIpNotInCalicoIPPool.Items) > 0 {
+		plan.Status.SetCondition(vmIpNotInCalicoIPPool)
+	}
+	if len(vmTooManyIPsForCalico.Items) > 0 {
+		plan.Status.SetCondition(vmTooManyIPsForCalico)
+	}
+	// CalicoPrimaryInvalid carries both plan-level (from validateCalicoPrimary)
+	// and per-VM (collected during this validateVM pass) issues.
+	if calicoPrimaryResult != nil {
+		if cond, ok := planbase.BuildCalicoPrimaryCondition(
+			CalicoPrimaryInvalid, api.CategoryCritical,
+			"The Calico primary-network mapping is not valid",
+			calicoPrimaryResult.Issues,
+		); ok {
+			plan.Status.SetCondition(cond)
+		}
 	}
 	if len(vmHasSnapshotsForWarm.Items) > 0 {
 		plan.Status.SetCondition(vmHasSnapshotsForWarm)

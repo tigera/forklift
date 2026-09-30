@@ -87,3 +87,14 @@ func (r *Validator) WarmMigration() bool {
 func (r *Validator) ConsolidationNeeded(vmRef ref.Ref) (bool, error) {
 	return false, nil
 }
+
+// CalicoVMIssues returns no issues (not applicable for EC2).
+func (r *Validator) CalicoVMIssues(_ ref.Ref, _ *planbase.CalicoValidationCache) ([]planbase.CalicoIssue, error) {
+	return nil, nil
+}
+
+// CalicoPrimaryIssues returns nil; any calico-flagged entry was already
+// rejected at plan level by ValidateCalicoPrimary.
+func (r *Validator) CalicoPrimaryIssues(_ ref.Ref, _ *planbase.CalicoPrimaryValidationCache) ([]planbase.CalicoPrimaryIssue, error) {
+	return nil, nil
+}

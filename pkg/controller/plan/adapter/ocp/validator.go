@@ -405,3 +405,15 @@ func (r *Validator) PVCNameTemplate(vmRef ref.Ref, pvcNameTemplate string) (ok b
 
 	return true, nil
 }
+
+// CalicoVMIssues returns no issues. Non-vSphere providers aren't a target
+// for Calico-Network IP/MAC preservation today.
+func (r *Validator) CalicoVMIssues(_ ref.Ref, _ *planbase.CalicoValidationCache) ([]planbase.CalicoIssue, error) {
+	return nil, nil
+}
+
+// CalicoPrimaryIssues returns nil; any calico-flagged entry was already
+// rejected at plan level by ValidateCalicoPrimary.
+func (r *Validator) CalicoPrimaryIssues(_ ref.Ref, _ *planbase.CalicoPrimaryValidationCache) ([]planbase.CalicoPrimaryIssue, error) {
+	return nil, nil
+}
