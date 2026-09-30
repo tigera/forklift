@@ -10,10 +10,11 @@ RUN --mount=type=cache,target=${GOCACHE},uid=1001 go build -buildvcs=false -ldfl
 FROM registry.access.redhat.com/ubi9-minimal:latest
 
 # Required to be able to get files from within the pod
-# BUILD_DATE differs on every build, so declaring it here re-runs the package
-# update rather than reusing a cached layer from an earlier build.
+# BUILD_DATE differs on every build. The update below references it, so it
+# re-runs rather than reusing a cached layer from an earlier build.
 ARG BUILD_DATE=unknown
-RUN microdnf -y update && \
+RUN echo "Updating packages for build ${BUILD_DATE}" && \
+    microdnf -y update && \
     microdnf -y install tar && \
     microdnf -y clean all
 

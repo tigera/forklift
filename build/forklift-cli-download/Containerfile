@@ -18,10 +18,11 @@ RUN --mount=type=cache,target=${GOCACHE},uid=1001 make build-mcp
 FROM registry.access.redhat.com/ubi9/nginx-126:latest
 
 USER 0
-# BUILD_DATE differs on every build, so declaring it here re-runs the package
-# update rather than reusing a cached layer from an earlier build.
+# BUILD_DATE differs on every build. The update below references it, so it
+# re-runs rather than reusing a cached layer from an earlier build.
 ARG BUILD_DATE=unknown
-RUN dnf -y update && \
+RUN echo "Updating packages for build ${BUILD_DATE}" && \
+    dnf -y update && \
     dnf -y clean all
 # The nginx RPM owns /var/log/nginx as root:root 0711, so updating that package
 # discards the base image's chown to 1001:0 and nginx can no longer open its
