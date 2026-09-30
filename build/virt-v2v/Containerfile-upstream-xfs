@@ -22,11 +22,18 @@ RUN rm /etc/pki/tls/fips_local.cnf && \
 ENV PATH="$PATH:/usr/libexec"
 ENV LIBGUESTFS_DEBUG=1 LIBGUESTFS_TRACE=1
 
-RUN mkdir /disks && \
+# BUILD_DATE differs on every build. The update below references it, so it
+# re-runs rather than reusing a cached layer from an earlier build.
+ARG BUILD_DATE=unknown
+RUN echo "Updating packages for build ${BUILD_DATE}" && \
+    mkdir /disks && \
     source /etc/os-release && \
-    dnf install -y \
+    dnf update -y && \
+    dnf install -y --setopt=install_weak_deps=0 \
         virt-v2v \
-        kernel && \
+        kernel \
+        libvirt-daemon-config-network \
+        passt && \
     dnf clean all
 
 # TODO: This should be replaced with `dnf install -y virtio-win` from centos-stream10
@@ -86,7 +93,6 @@ COPY --from=builder /app/forklift-wait-for-reboot /usr/local/bin/forklift-wait-f
 ENTRYPOINT ["/usr/libexec/catatonit/catatonit", "/usr/bin/virt-v2v-wrapper"]
 
 ARG GIT_COMMIT=unknown
-ARG BUILD_DATE=unknown
 
 LABEL \
         com.redhat.component="forklift-virt-v2v-container" \

@@ -1,5 +1,12 @@
 FROM registry.redhat.io/openshift4/ose-ansible-rhel9-operator:v4.18.0-202504021503.p0.gbd5e2c9.assembly.stream.el9
 
+USER root
+# Tolerates either package manager: this base needs an entitlement to pull, so which of
+# dnf/microdnf it carries could not be verified locally. The upstream sibling ships microdnf.
+RUN if command -v microdnf >/dev/null 2>&1; then microdnf -y update && microdnf -y clean all; \
+    else dnf -y update && dnf -y clean all; fi && \
+    rm -rf /var/cache/yum /var/cache/dnf
+
 USER 1001
 WORKDIR /app
 COPY operator/watches.yaml watches.yaml
