@@ -16,10 +16,9 @@ RUN echo "Updating packages for build ${BUILD_DATE}" && \
   dnf update -y && \
   dnf install -y --allowerasing --setopt=install_weak_deps=0 \
   libguestfs \
-  libguestfs-tools \
   libguestfs-tools-c \
   virt-v2v \
-  qemu-kvm \
+  qemu-kvm-core \
   nbdkit \
   nbdkit-vddk-plugin \
   curl \
