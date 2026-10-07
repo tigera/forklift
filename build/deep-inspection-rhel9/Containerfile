@@ -9,8 +9,11 @@ RUN --mount=type=cache,target=${GOCACHE},uid=1001 GOOS=linux GOARCH=amd64 go bui
 
 FROM quay.io/centos/centos:stream9
 
-# Update packages to address security vulnerabilities (CVE fixes)
-RUN dnf update -y && \
+# BUILD_DATE differs on every build. The update below references it, so it
+# re-runs rather than reusing a cached layer from an earlier build.
+ARG BUILD_DATE=unknown
+RUN echo "Updating packages for build ${BUILD_DATE}" && \
+  dnf update -y && \
   dnf install -y --allowerasing --setopt=install_weak_deps=0 \
   libguestfs \
   libguestfs-tools \
@@ -66,6 +69,7 @@ COPY --from=builder --chown=1001:0 /app/deep-inspection /usr/local/bin/deep-insp
 ENV LIBGUESTFS_BACKEND=direct
 ENTRYPOINT ["/usr/local/bin/deep-inspection"]
 
+ARG GIT_COMMIT=unknown
 LABEL \
   com.redhat.component="mtv-deep-inspection-rhel9-container" \
   name="migration-toolkit-virtualization/mtv-deep-inspection-rhel9" \
@@ -77,4 +81,6 @@ LABEL \
   summary="Migration Toolkit for Virtualization - Deep Inspection" \
   vendor="Red Hat, Inc." \
   maintainer="Migration Toolkit for Virtualization Team <migtoolkit-virt@redhat.com>" \
+  org.opencontainers.image.revision="$GIT_COMMIT" \
+  org.opencontainers.image.created="$BUILD_DATE" \
   org.opencontainers.image.source="https://github.com/kubev2v/forklift"
