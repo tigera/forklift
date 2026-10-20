@@ -140,7 +140,7 @@ func linkCertificates(env *config.AppConfig) (err error) {
 			}
 		} else {
 			// otherwise, keep system pool certificates
-			err := os.Symlink("/etc/pki/tls/certs/ca-bundle.crt.bak", "/opt/ca-bundle.crt")
+			err := os.Symlink(config.SystemCABundle, config.LibvirtCABundle)
 			if err != nil {
 				fmt.Println("Error creating ca cert link ", err)
 				os.Exit(1)
