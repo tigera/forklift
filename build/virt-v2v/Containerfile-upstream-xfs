@@ -76,6 +76,16 @@ ENV HOME=/home/qemu
 # Refer to: https://issues.redhat.com/browse/RHEL-105529
 RUN dnf install -y https://kojihub.stream.centos.org/kojifiles/packages/catatonit/0.2.0/2.el9/x86_64/catatonit-0.2.0-2.el9.x86_64.rpm
 
+# virt-v2v reads vSphere disks with curl and nbdkit's curl plugin, which trust only
+# the system CA bundle. Point that bundle at a copy the pod can write, so the
+# entrypoint can add the provider's CA. Until it does, the copy holds the system CAs.
+# Owned by qemu and group 0, writable by both, so it works for the qemu user the
+# pod runs as and for the arbitrary uid in group 0 that OpenShift may assign.
+RUN install -d -o qemu -g 0 -m 0775 /var/lib/forklift/ca && \
+    install -o qemu -g 0 -m 0664 /etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem \
+        /var/lib/forklift/ca/ca-bundle.crt && \
+    ln -sf /var/lib/forklift/ca/ca-bundle.crt /etc/pki/tls/certs/ca-bundle.crt
+
 # This ensures that the 'libvirt:qemu:///session' connection method, which is
 # the officially tested and supported flow, is utilized instead of direct connections.
 ENV LIBGUESTFS_BACKEND=libvirt:qemu:///session
