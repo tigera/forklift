@@ -121,16 +121,26 @@ func main() {
 // It creates a links between the downloaded guest image from virt-v2v and mounted PVC.
 func linkCertificates(env *config.AppConfig) (err error) {
 	if env.IsVsphereMigration() {
-		if _, err := os.Stat("/etc/secret/cacert"); err == nil {
+		if _, err := os.Stat(config.ProviderCACert); err == nil {
 			// use the specified certificate
-			err = os.Symlink("/etc/secret/cacert", "/opt/ca-bundle.crt")
+			err = os.Symlink(config.ProviderCACert, config.LibvirtCABundle)
 			if err != nil {
 				fmt.Println("Error creating ca cert link ", err)
 				os.Exit(1)
 			}
+			// libvirt reads the link above, but virt-v2v reads the disks with curl,
+			// which only trusts the system bundle.
+			added, err := utils.AddCAToBundle(config.SystemCAs, config.ProviderCACert, config.WritableCABundle)
+			if err != nil {
+				fmt.Println("Error adding the provider CA to the system CA bundle ", err)
+				os.Exit(1)
+			}
+			if !added {
+				fmt.Println("No writable system CA bundle in this image; disk downloads will not trust the provider CA")
+			}
 		} else {
 			// otherwise, keep system pool certificates
-			err := os.Symlink("/etc/pki/tls/certs/ca-bundle.crt.bak", "/opt/ca-bundle.crt")
+			err := os.Symlink(config.SystemCABundle, config.LibvirtCABundle)
 			if err != nil {
 				fmt.Println("Error creating ca cert link ", err)
 				os.Exit(1)
