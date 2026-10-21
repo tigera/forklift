@@ -59,11 +59,22 @@ const (
 
 // Paths
 const (
-	V2vOutputDir            = "/var/tmp/v2v"
-	InspectionOutputFile    = V2vOutputDir + "/inspection.xml"
-	VddkLib                 = "/opt/vmware-vix-disklib-distrib"
-	NfcPlugin               = "/opt/nbdkit-nfc-plugin.so"
-	NfcPluginBuiltin        = "/usr/lib64/nbdkit/plugins/nbdkit-nfc-plugin.so"
+	V2vOutputDir         = "/var/tmp/v2v"
+	InspectionOutputFile = V2vOutputDir + "/inspection.xml"
+	VddkLib              = "/opt/vmware-vix-disklib-distrib"
+	NfcPlugin            = "/opt/nbdkit-nfc-plugin.so"
+	NfcPluginBuiltin     = "/usr/lib64/nbdkit/plugins/nbdkit-nfc-plugin.so"
+	// ProviderCACert is the vSphere provider's CA, from the mounted provider secret.
+	ProviderCACert = "/etc/secret/cacert"
+	// LibvirtCABundle is the CA file libvirt reads through cacert= in the vpx:// URL.
+	LibvirtCABundle = "/opt/ca-bundle.crt"
+	// SystemCABundle is the system CA bundle that curl and libcurl read.
+	SystemCABundle = "/etc/pki/tls/certs/ca-bundle.crt"
+	// SystemCAs holds the CAs the system trusts, as extracted by update-ca-trust.
+	SystemCAs = "/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem"
+	// WritableCABundle is where the image points SystemCABundle, so that the
+	// entrypoint can add the provider's CA to it.
+	WritableCABundle        = "/var/lib/forklift/ca/ca-bundle.crt"
 	Luksdir                 = "/etc/luks"
 	VddkConfFile            = "/mnt/vddk-conf/vddk-config-file"
 	DynamicScriptsMountPath = "/mnt/dynamic_scripts"
