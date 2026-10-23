@@ -1,0 +1,18 @@
+# Which workflows run on which events.
+version: v2
+
+# A PR from a fork, by someone without write access, waits for a maintainer to
+# approve each commit before CI runs on it.
+requireApproval: true
+
+# The calico/go-build tag that `useGoBuild` steps run in. Checks that need tools
+# it doesn't have are switched off in ciworkflow.yaml.
+goBuildVersion: 1.27.1-llvm21.1.8-k8s1.37.1
+
+workflows:
+  # One workflow, so its status can be a single required check.
+  - name: forklift
+    workflowFile: .argoci/ciworkflow.yaml
+    runWhen:
+      alwaysRunOnPR: true
+      alwaysRunOnMerge: true
