@@ -562,19 +562,19 @@ func (r *Reconciler) validateUserDefinedNetwork(ctx *plancontext.Context) (err e
 // CalicoNetworkInvalid condition whose items are the offending NAD
 // references. Healthy NADs are returned in a cache for per-VM checks.
 func (r *Reconciler) validateCalicoNetwork(ctx *plancontext.Context) (*planbase.CalicoValidationCache, error) {
-	provider := ctx.Plan.Referenced.Provider.Source
+	provider := ctx.Plan.Provider.Source
 	if provider == nil || provider.Type() != api.VSphere {
-		return nil, nil
+		return nil, nil //nolint:nilnil
 	}
-	if ctx.Plan.Referenced.Map.Network == nil {
-		return nil, nil
+	if ctx.Plan.Map.Network == nil {
+		return nil, nil //nolint:nilnil
 	}
 	// Map-scoped issues are surfaced as NetworkMap conditions by the
 	// NetworkMap controller; this pass only rebuilds the cache the per-VM
 	// checks read from and evaluates the plan-scoped concerns.
 	result, err := planbase.ValidateCalicoNADs(
 		context.TODO(), ctx.Destination.Client,
-		ctx.Plan.Referenced.Map.Network.Spec.Map, r.Log)
+		ctx.Plan.Map.Network.Spec.Map, r.Log)
 	if err != nil {
 		return nil, err
 	}
@@ -605,14 +605,14 @@ func (r *Reconciler) validateCalicoNetwork(ctx *plancontext.Context) (*planbase.
 // deferred to validateVM, which appends per-VM issues onto the same result
 // so both layers fold into a single condition.
 func (r *Reconciler) validateCalicoPrimary(ctx *plancontext.Context) (*planbase.CalicoPrimaryValidationResult, error) {
-	provider := ctx.Plan.Referenced.Provider.Source
+	provider := ctx.Plan.Provider.Source
 	if provider == nil || provider.Type() != api.VSphere {
 		return &planbase.CalicoPrimaryValidationResult{}, nil
 	}
-	if ctx.Plan.Referenced.Map.Network == nil {
+	if ctx.Plan.Map.Network == nil {
 		return &planbase.CalicoPrimaryValidationResult{}, nil
 	}
-	pairs := ctx.Plan.Referenced.Map.Network.Spec.Map
+	pairs := ctx.Plan.Map.Network.Spec.Map
 	// Map-scoped issues are surfaced as NetworkMap conditions by the
 	// NetworkMap controller; this pass only rebuilds the cache the per-VM
 	// checks read from and evaluates the plan-scoped concerns.
