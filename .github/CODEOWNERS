@@ -1,6 +1,1 @@
-* @mnecas @yaacov @solenoci @Hazanel @mrnold
-.konflux @solenoci @mnecas
-.tekton  @solenoci @mnecas
-renovate.json @solenoci @mnecas
-docs @mnecas @yaacov
-cmd/vsphere-copy-offload-populator @rgolangh @mnecas
+* @tigera/core-maintainers
