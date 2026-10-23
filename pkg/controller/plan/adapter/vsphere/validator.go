@@ -742,7 +742,7 @@ func (r *Validator) CalicoVMIssues(vmRef ref.Ref, cache *planbase.CalicoValidati
 	if cache == nil || len(cache.NADs) == 0 {
 		return nil, nil
 	}
-	if r.Plan.Referenced.Map.Network == nil {
+	if r.Plan.Map.Network == nil {
 		return nil, nil
 	}
 	vm := &model.VM{}
@@ -820,7 +820,7 @@ func (r *Validator) CalicoPrimaryIssues(vmRef ref.Ref, cache *planbase.CalicoPri
 	if cache == nil || cache.Primary == nil {
 		return nil, nil
 	}
-	if r.Plan.Referenced.Map.Network == nil {
+	if r.Plan.Map.Network == nil {
 		return nil, nil
 	}
 	vm := &model.VM{}
@@ -891,7 +891,7 @@ func (r *Validator) CalicoPrimaryIssues(vmRef ref.Ref, cache *planbase.CalicoPri
 // will allocate.
 func (r *Validator) buildNICResolver(nics []vsphere.NIC) ([]string, map[string][]api.NetworkPair, error) {
 	pairsBySource := map[string][]api.NetworkPair{}
-	for _, pair := range r.Plan.Referenced.Map.Network.Spec.Map {
+	for _, pair := range r.Plan.Map.Network.Spec.Map {
 		network := &model.Network{}
 		if err := r.Source.Inventory.Find(network, pair.Source.Ref); err != nil {
 			return nil, nil, liberr.Wrap(err, "buildNICResolver, source", pair.Source.String())

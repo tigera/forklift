@@ -604,6 +604,71 @@ push-all-images-quay: REGISTRY = $(QUAY_REGISTRY)
 push-all-images-quay: REGISTRY_ORG = $(QUAY_REGISTRY_ORG)
 push-all-images-quay: $(addsuffix -image,$(addprefix push-,$(TIGERA_IMAGES)))
 
+##@ CI
+
+# The checks .argoci/ciworkflow.yaml runs, one target per CI step, so a failing
+# step can be rerun locally with the same command. Unlike `test` and `ci`, none
+# of them rewrites tracked files before checking them, except ci-generate, which
+# regenerates on purpose and then fails if anything changed.
+
+GUEST_NETWORK_TEST := ./pkg/virt-v2v/customize/scripts/rhel/run/test-network_config_util.sh
+
+# Switches for checks that need tools the CI image doesn't have yet. Locally
+# everything runs; .argoci/ciworkflow.yaml turns these off.
+#   CI_LIBVIRT           lint and test the Go packages that link libvirt
+#                        (needs libvirt-devel)
+#   CI_GUEST_SHELLS      shells to run the guest network-script tests under
+#   CI_GUEST_SKIP        guest test cases to skip, by name prefix: systemd needs
+#                        netplan, network-interfaces runs ifquery in a container
+#   CI_RENDER_MANIFESTS  render operator/.*_manifests (needs envsubst)
+CI_LIBVIRT ?= true
+CI_GUEST_SHELLS ?= bash dash
+CI_GUEST_SKIP ?=
+CI_RENDER_MANIFESTS ?= true
+
+ifeq ($(CI_LIBVIRT),true)
+CI_GO_PACKAGES = ./pkg/... ./cmd/...
+else
+# Package directories rather than import paths, which golangci-lint reads as
+# directories.
+CI_GO_PACKAGES = $(shell go list -f '{{.Dir}}{{range .Deps}}{{if eq . "libvirt.org/go/libvirt"}} libvirt{{end}}{{end}}' ./pkg/... ./cmd/... | grep -v ' libvirt$$')
+endif
+
+.PHONY: ci-checks
+ci-checks: ci-lint ci-ut ci-generate ## Run every CI check
+
+.PHONY: ci-lint
+ci-lint: $(GOLANGCI_LINT_BIN) ## CI: golangci-lint, including go vet and gofmt
+	$(GOLANGCI_LINT_BIN) run --timeout 10m $(CI_GO_PACKAGES)
+
+.PHONY: ci-ut
+ci-ut: validation-test ## CI: Go unit tests, OPA policy tests and the guest network-script tests
+	go test -coverprofile=cover.out $(CI_GO_PACKAGES)
+	for sh in $(CI_GUEST_SHELLS); do \
+		CONTAINER_CMD=$(CONTAINER_CMD) GUEST_TEST_SKIP="$(CI_GUEST_SKIP)" $$sh $(GUEST_NETWORK_TEST) || exit 1; \
+	done
+
+.PHONY: ci-generate
+ci-generate: ## CI: regenerate code, manifests and vendored modules, then fail if anything changed
+ifeq ($(CI_RENDER_MANIFESTS),true)
+	$(MAKE) update-manifests
+else
+	$(MAKE) generate generate-csv manifests
+endif
+	go mod tidy
+	go mod vendor
+	cd cmd/vsphere-copy-offload-populator && go mod vendor
+	$(MAKE) check-dirty
+
+.PHONY: check-dirty
+check-dirty: ## Fail if the working tree differs from the last commit
+	@if [ -n "$$(git status --porcelain)" ]; then \
+		echo "The tree changed. Run 'make ci-generate' and commit the result:"; \
+		git status --short; \
+		git --no-pager diff --stat; \
+		exit 1; \
+	fi
+
 
 ##@ Multi-Architecture Manifests
 

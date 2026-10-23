@@ -23,8 +23,8 @@ var _ = Describe("NetworkMap Calico validation", func() {
 			ObjectMeta: meta.ObjectMeta{Name: "test-map", Namespace: "test"},
 			Spec:       api.NetworkMapSpec{Map: pairs},
 		}
-		mp.Referenced.Provider.Source = src
-		mp.Referenced.Provider.Destination = dst
+		mp.Provider.Source = src
+		mp.Provider.Destination = dst
 		return mp
 	}
 	calicoPodPair := api.NetworkPair{
