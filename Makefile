@@ -138,6 +138,7 @@ OVA_PROXY_IMAGE ?= $(REGISTRY)/$(REGISTRY_ORG)/forklift-ova-proxy:$(REGISTRY_TAG
 CLI_DOWNLOAD_IMAGE ?= $(REGISTRY)/$(REGISTRY_ORG)/forklift-cli-download:$(REGISTRY_TAG)
 VSPHERE_COPY_OFFLOAD_POPULATOR_IMAGE ?= $(REGISTRY)/$(REGISTRY_ORG)/vsphere-copy-offload-populator:$(REGISTRY_TAG)
 DEEP_INSPECTION_IMAGE ?= $(REGISTRY)/$(REGISTRY_ORG)/forklift-deep-inspection:$(REGISTRY_TAG)
+DEEP_INSPECTION_IMAGE_RHEL9 ?= $(REGISTRY)/$(REGISTRY_ORG)/forklift-deep-inspection-xfs:$(REGISTRY_TAG)
 
 ### OLM
 OPERATOR_BUNDLE_IMAGE ?= $(REGISTRY)/$(REGISTRY_ORG)/forklift-operator-bundle:$(REGISTRY_TAG)
@@ -489,7 +490,7 @@ build-deep-inspection-image: check_container_runtime ## Build forklift-deep-insp
 		echo "Notice: deep-inspection image build is only supported on amd64 platform."; \
 		echo "Current platform: $(PLATFORM) - skipping deep-inspection image build."; \
 	else \
-		$(CONTAINER_CMD) build $(PLATFORM_FLAG) $(BUILD_PULL_ARGS) $(BUILD_LABEL_ARGS) -t $(DEEP_INSPECTION_IMAGE)$(PLATFORM_SUFFIX) -f build/deep-inspection/Containerfile-upstream .; \
+		$(CONTAINER_CMD) build $(PLATFORM_FLAG) $(BUILD_PULL_ARGS) $(BUILD_LABEL_ARGS) -t $(DEEP_INSPECTION_IMAGE)$(PLATFORM_SUFFIX) -f build/deep-inspection/Containerfile .; \
 	fi
 
 push-deep-inspection-image: build-deep-inspection-image ## Push forklift-deep-inspection image
@@ -500,14 +501,32 @@ push-deep-inspection-image: build-deep-inspection-image ## Push forklift-deep-in
 		$(CONTAINER_CMD) push $(DEEP_INSPECTION_IMAGE)$(PLATFORM_SUFFIX); \
 	fi
 
+build-deep-inspection-xfs-image: check_container_runtime ## Build forklift-deep-inspection-xfs (CentOS Stream 9) container image
+	# libguestfs/virt tools stack is AMD64-only
+	@if [ "$(PLATFORM_ARCH)" != "amd64" ]; then \
+		echo "Notice: deep-inspection-xfs image build is only supported on amd64 platform."; \
+		echo "Current platform: $(PLATFORM) - skipping deep-inspection-xfs image build."; \
+	else \
+		$(CONTAINER_CMD) build $(PLATFORM_FLAG) $(BUILD_PULL_ARGS) $(BUILD_LABEL_ARGS) -t $(DEEP_INSPECTION_IMAGE_RHEL9)$(PLATFORM_SUFFIX) -f build/deep-inspection-rhel9/Containerfile .; \
+	fi
+
+push-deep-inspection-xfs-image: build-deep-inspection-xfs-image ## Push forklift-deep-inspection-xfs image
+	@if [ "$(PLATFORM_ARCH)" != "amd64" ]; then \
+		echo "Notice: deep-inspection-xfs image push is only supported on amd64 platform."; \
+		echo "Current platform: $(PLATFORM) - skipping deep-inspection-xfs image push."; \
+	else \
+		$(CONTAINER_CMD) push $(DEEP_INSPECTION_IMAGE_RHEL9)$(PLATFORM_SUFFIX); \
+	fi
+
 build-all-images: ## Build all container images
-# NOTE: build-deep-inspection-image is excluded until build/deep-inspection/Containerfile-upstream exists
 build-all-images: build-api-image \
                   build-controller-image \
                   build-validation-image \
                   build-operator-image \
                   build-virt-v2v-image \
                   build-virt-v2v-xfs-image \
+                  build-deep-inspection-image \
+                  build-deep-inspection-xfs-image \
                   build-populator-controller-image \
                   build-ovirt-populator-image \
                   build-openstack-populator-image\
@@ -520,13 +539,14 @@ build-all-images: build-api-image \
                   build-operator-index-image
 
 push-all-images: ## Push all container images
-# NOTE: push-deep-inspection-image is excluded until build/deep-inspection/Containerfile-upstream exists
 push-all-images:  push-api-image \
                   push-controller-image \
                   push-validation-image \
                   push-operator-image \
                   push-virt-v2v-image \
                   push-virt-v2v-xfs-image \
+                  push-deep-inspection-image \
+                  push-deep-inspection-xfs-image \
                   push-populator-controller-image \
                   push-ovirt-populator-image \
                   push-openstack-populator-image\
@@ -556,6 +576,7 @@ TIGERA_REGISTRY_ORG ?= unique-caldron-775/tigera-forklift
 # there is nothing in it to scan. Build it with `make build-operator-index-image`
 # against a public bundle if you actually need it.
 TIGERA_IMAGES := api controller validation operator virt-v2v virt-v2v-xfs \
+                 deep-inspection deep-inspection-xfs \
                  populator-controller ovirt-populator openstack-populator \
                  vsphere-copy-offload-populator ova-provider-server \
                  hyperv-provider-server cli-download ova-proxy operator-bundle
