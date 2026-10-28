@@ -59,19 +59,19 @@ func TestVirtV2vSeccompProfile(t *testing.T) {
 	}
 
 	origOpenShift := settings.Settings.OpenShift
-	origType := settings.Settings.Migration.VirtV2vSeccompProfileType
-	origPath := settings.Settings.Migration.VirtV2vSeccompProfilePath
+	origType := settings.Settings.VirtV2vSeccompProfileType
+	origPath := settings.Settings.VirtV2vSeccompProfilePath
 	t.Cleanup(func() {
 		settings.Settings.OpenShift = origOpenShift
-		settings.Settings.Migration.VirtV2vSeccompProfileType = origType
-		settings.Settings.Migration.VirtV2vSeccompProfilePath = origPath
+		settings.Settings.VirtV2vSeccompProfileType = origType
+		settings.Settings.VirtV2vSeccompProfilePath = origPath
 	})
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			settings.Settings.OpenShift = tt.openShift
-			settings.Settings.Migration.VirtV2vSeccompProfileType = tt.profileType
-			settings.Settings.Migration.VirtV2vSeccompProfilePath = tt.profilePath
+			settings.Settings.VirtV2vSeccompProfileType = tt.profileType
+			settings.Settings.VirtV2vSeccompProfilePath = tt.profilePath
 
 			got := virtV2vSeccompProfile()
 
@@ -127,19 +127,19 @@ func TestVirtV2vAppArmorProfile(t *testing.T) {
 	}
 
 	origOpenShift := settings.Settings.OpenShift
-	origType := settings.Settings.Migration.VirtV2vAppArmorProfileType
-	origPath := settings.Settings.Migration.VirtV2vAppArmorProfilePath
+	origType := settings.Settings.VirtV2vAppArmorProfileType
+	origPath := settings.Settings.VirtV2vAppArmorProfilePath
 	t.Cleanup(func() {
 		settings.Settings.OpenShift = origOpenShift
-		settings.Settings.Migration.VirtV2vAppArmorProfileType = origType
-		settings.Settings.Migration.VirtV2vAppArmorProfilePath = origPath
+		settings.Settings.VirtV2vAppArmorProfileType = origType
+		settings.Settings.VirtV2vAppArmorProfilePath = origPath
 	})
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			settings.Settings.OpenShift = tt.openShift
-			settings.Settings.Migration.VirtV2vAppArmorProfileType = tt.profileType
-			settings.Settings.Migration.VirtV2vAppArmorProfilePath = tt.profilePath
+			settings.Settings.VirtV2vAppArmorProfileType = tt.profileType
+			settings.Settings.VirtV2vAppArmorProfilePath = tt.profilePath
 
 			got := virtV2vAppArmorProfile()
 
@@ -173,41 +173,41 @@ func TestVirtV2vAppArmorProfile(t *testing.T) {
 // still never reach either pod spec.
 func TestVirtV2vPodSpecCarriesSecurityProfiles(t *testing.T) {
 	origOpenShift := settings.Settings.OpenShift
-	origSeccompType := settings.Settings.Migration.VirtV2vSeccompProfileType
-	origSeccompPath := settings.Settings.Migration.VirtV2vSeccompProfilePath
-	origAppArmorType := settings.Settings.Migration.VirtV2vAppArmorProfileType
-	origAppArmorPath := settings.Settings.Migration.VirtV2vAppArmorProfilePath
+	origSeccompType := settings.Settings.VirtV2vSeccompProfileType
+	origSeccompPath := settings.Settings.VirtV2vSeccompProfilePath
+	origAppArmorType := settings.Settings.VirtV2vAppArmorProfileType
+	origAppArmorPath := settings.Settings.VirtV2vAppArmorProfilePath
 	t.Cleanup(func() {
 		settings.Settings.OpenShift = origOpenShift
-		settings.Settings.Migration.VirtV2vSeccompProfileType = origSeccompType
-		settings.Settings.Migration.VirtV2vSeccompProfilePath = origSeccompPath
-		settings.Settings.Migration.VirtV2vAppArmorProfileType = origAppArmorType
-		settings.Settings.Migration.VirtV2vAppArmorProfilePath = origAppArmorPath
+		settings.Settings.VirtV2vSeccompProfileType = origSeccompType
+		settings.Settings.VirtV2vSeccompProfilePath = origSeccompPath
+		settings.Settings.VirtV2vAppArmorProfileType = origAppArmorType
+		settings.Settings.VirtV2vAppArmorProfilePath = origAppArmorPath
 	})
 
 	// The builder parses these unconditionally, so they cannot be left empty.
 	origResources := [4]string{
-		settings.Settings.Migration.VirtV2vContainerRequestsCpu,
-		settings.Settings.Migration.VirtV2vContainerRequestsMemory,
-		settings.Settings.Migration.VirtV2vContainerLimitsCpu,
-		settings.Settings.Migration.VirtV2vContainerLimitsMemory,
+		settings.Settings.VirtV2vContainerRequestsCpu,
+		settings.Settings.VirtV2vContainerRequestsMemory,
+		settings.Settings.VirtV2vContainerLimitsCpu,
+		settings.Settings.VirtV2vContainerLimitsMemory,
 	}
 	t.Cleanup(func() {
-		settings.Settings.Migration.VirtV2vContainerRequestsCpu = origResources[0]
-		settings.Settings.Migration.VirtV2vContainerRequestsMemory = origResources[1]
-		settings.Settings.Migration.VirtV2vContainerLimitsCpu = origResources[2]
-		settings.Settings.Migration.VirtV2vContainerLimitsMemory = origResources[3]
+		settings.Settings.VirtV2vContainerRequestsCpu = origResources[0]
+		settings.Settings.VirtV2vContainerRequestsMemory = origResources[1]
+		settings.Settings.VirtV2vContainerLimitsCpu = origResources[2]
+		settings.Settings.VirtV2vContainerLimitsMemory = origResources[3]
 	})
-	settings.Settings.Migration.VirtV2vContainerRequestsCpu = "1000m"
-	settings.Settings.Migration.VirtV2vContainerRequestsMemory = "1Gi"
-	settings.Settings.Migration.VirtV2vContainerLimitsCpu = "4000m"
-	settings.Settings.Migration.VirtV2vContainerLimitsMemory = "8Gi"
+	settings.Settings.VirtV2vContainerRequestsCpu = "1000m"
+	settings.Settings.VirtV2vContainerRequestsMemory = "1Gi"
+	settings.Settings.VirtV2vContainerLimitsCpu = "4000m"
+	settings.Settings.VirtV2vContainerLimitsMemory = "8Gi"
 
 	settings.Settings.OpenShift = false
-	settings.Settings.Migration.VirtV2vSeccompProfileType = string(core.SeccompProfileTypeLocalhost)
-	settings.Settings.Migration.VirtV2vSeccompProfilePath = "profiles/unshare.json"
-	settings.Settings.Migration.VirtV2vAppArmorProfileType = string(core.AppArmorProfileTypeLocalhost)
-	settings.Settings.Migration.VirtV2vAppArmorProfilePath = "forklift-virt-v2v-unshare"
+	settings.Settings.VirtV2vSeccompProfileType = string(core.SeccompProfileTypeLocalhost)
+	settings.Settings.VirtV2vSeccompProfilePath = "profiles/unshare.json"
+	settings.Settings.VirtV2vAppArmorProfileType = string(core.AppArmorProfileTypeLocalhost)
+	settings.Settings.VirtV2vAppArmorProfilePath = "forklift-virt-v2v-unshare"
 
 	builder := &Builder{Config: convctx.PodConfig{
 		TargetNamespace: "vms",

@@ -56,8 +56,8 @@ func warnCalicoIPModeIgnored(mp *api.NetworkMap) {
 // Ready, which in turn blocks plans referencing the map. The two flags come
 // from validateDestination's walk over the entries.
 func (r *Reconciler) validateCalico(mp *api.NetworkMap, hasCalicoBlock, hasMultus bool) error {
-	src := mp.Referenced.Provider.Source
-	dst := mp.Referenced.Provider.Destination
+	src := mp.Provider.Source
+	dst := mp.Provider.Destination
 	if src == nil || dst == nil {
 		return nil
 	}

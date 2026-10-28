@@ -131,7 +131,7 @@ var _ = ginkgo.Describe("Plan Validations", func() {
 				ObjectMeta: meta.ObjectMeta{Name: "test-netmap", Namespace: testNamespace},
 				Spec:       api.NetworkMapSpec{Map: entries},
 			}
-			netMap.Status.Conditions.SetCondition(libcnd.Condition{Type: libcnd.Ready, Status: libcnd.True})
+			netMap.Status.SetCondition(libcnd.Condition{Type: libcnd.Ready, Status: libcnd.True})
 			plan.Spec.Map.Network = core.ObjectReference{Name: "test-netmap", Namespace: testNamespace}
 			reconciler = createFakeReconciler(plan, source, destination, netMap)
 			return plan
