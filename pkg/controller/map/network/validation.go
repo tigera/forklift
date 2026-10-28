@@ -33,6 +33,7 @@ const (
 	NotFound               = "NotFound"
 	Ambiguous              = "Ambiguous"
 	NotValidForDestination = "NotValidForDestination"
+	IgnoredForCalico       = "IgnoredForCalico"
 )
 
 // Statuses
@@ -163,7 +164,9 @@ next:
 			networkIPModeInvalid = append(networkIPModeInvalid, entry.Source.String())
 			networkIPModeHasCritical = true
 		}
-		if entry.Destination.Type == Pod && entry.NetworkIPMode == api.NetworkIPModePreserve {
+		// A Calico pod entry ignores networkIPMode entirely; warnCalicoIPModeIgnored
+		// reports it.
+		if entry.Destination.Type == Pod && entry.Destination.Calico == nil && entry.NetworkIPMode == api.NetworkIPModePreserve {
 			networkIPModeInvalid = append(networkIPModeInvalid, entry.Source.String())
 		}
 		if entry.Destination.Calico != nil {
@@ -234,6 +237,8 @@ next:
 			Items:    networkIPModeInvalid,
 		})
 	}
+
+	warnCalicoIPModeIgnored(mp)
 
 	return r.validateCalico(mp, hasCalicoBlock, hasMultus)
 }
