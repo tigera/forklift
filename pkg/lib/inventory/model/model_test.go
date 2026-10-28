@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"sync"
 	"testing"
 	"time"
 
@@ -245,15 +246,27 @@ func (w *MutatingHandler) End() {
 }
 
 // Used for cascade delete event testing.
+// DetailHandler can serve several watches, each delivering events on its own
+// goroutine, so it guards what it records.
 type DetailHandler struct {
 	StockEventHandler
+	mutex   sync.Mutex
 	deleted []string
 }
 
 func (h *DetailHandler) Deleted(e Event) {
+	h.mutex.Lock()
+	defer h.mutex.Unlock()
 	h.deleted = append(
 		h.deleted,
 		e.Model.Pk())
+}
+
+// Deletes returns a copy of the primary keys of the deleted models so far.
+func (h *DetailHandler) Deletes() []string {
+	h.mutex.Lock()
+	defer h.mutex.Unlock()
+	return append([]string(nil), h.deleted...)
 }
 
 func TestDefinition(t *testing.T) {
@@ -511,10 +524,10 @@ func TestCascade(t *testing.T) {
 	// Watches apply deletes asynchronously; allow enough time for CI and slow hosts.
 	const wantDeleted = 40
 	deadline := time.Now().Add(5 * time.Second)
-	for len(handler.deleted) != wantDeleted && time.Now().Before(deadline) {
+	for len(handler.Deletes()) != wantDeleted && time.Now().Before(deadline) {
 		time.Sleep(5 * time.Millisecond)
 	}
-	g.Expect(handler.deleted).To(gomega.HaveLen(wantDeleted))
+	g.Expect(handler.Deletes()).To(gomega.HaveLen(wantDeleted))
 
 }
 

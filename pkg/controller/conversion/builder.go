@@ -55,7 +55,7 @@ func (b *Builder) BuildVirtV2vPod(vm *plan.VMStatus, volumes []core.Volume, volu
 // permitting profile; elsewhere an admin must install one and name it, since a
 // Localhost profile absent from a node makes the kubelet refuse the pod.
 func virtV2vSeccompProfile() core.SeccompProfile {
-	profileType := Settings.Migration.VirtV2vSeccompProfileType
+	profileType := Settings.VirtV2vSeccompProfileType
 	if profileType == "" {
 		if !settings.Settings.OpenShift {
 			return core.SeccompProfile{Type: core.SeccompProfileTypeRuntimeDefault}
@@ -65,7 +65,7 @@ func virtV2vSeccompProfile() core.SeccompProfile {
 
 	profile := core.SeccompProfile{Type: core.SeccompProfileType(profileType)}
 	if profile.Type == core.SeccompProfileTypeLocalhost {
-		localhostProfile := Settings.Migration.VirtV2vSeccompProfilePath
+		localhostProfile := Settings.VirtV2vSeccompProfilePath
 		if localhostProfile == "" {
 			localhostProfile = settings.DefaultUnshareSeccompProfilePath
 		}
@@ -78,14 +78,14 @@ func virtV2vSeccompProfile() core.SeccompProfile {
 // pivot_root, which the runtime default AppArmor profile denies outright. nil
 // leaves the field unset, which is what nodes not enforcing AppArmor want.
 func virtV2vAppArmorProfile() *core.AppArmorProfile {
-	profileType := Settings.Migration.VirtV2vAppArmorProfileType
+	profileType := Settings.VirtV2vAppArmorProfileType
 	if profileType == "" {
 		return nil
 	}
 
 	profile := &core.AppArmorProfile{Type: core.AppArmorProfileType(profileType)}
 	if profile.Type == core.AppArmorProfileTypeLocalhost {
-		localhostProfile := Settings.Migration.VirtV2vAppArmorProfilePath
+		localhostProfile := Settings.VirtV2vAppArmorProfilePath
 		if localhostProfile == "" {
 			localhostProfile = settings.DefaultUnshareAppArmorProfile
 		}
