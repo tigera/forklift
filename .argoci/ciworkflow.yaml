@@ -17,7 +17,7 @@ globalPrologue: |
 defaults:
   # Every step runs in the calico/go-build image that config.yaml pins.
   useGoBuild: true
-  requests: {cpu: 4000m, memory: 8Gi}
+  requests: {cpu: 3500m, memory: 8Gi}
   timeout: 30m
 
 # The stock image lacks libvirt-devel, netplan, the docker CLI, dash and
