@@ -3,8 +3,32 @@ package base
 import (
 	"testing"
 
+	api "github.com/kubev2v/forklift/pkg/apis/forklift/v1beta1"
+	"github.com/kubev2v/forklift/pkg/apis/forklift/v1beta1/ref"
 	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
+
+// A Calico pod entry ignores networkIPMode: every value resolves to what the
+// plan's preserveStaticIPs gives, matching the pod's IP.
+func TestResolveNICModes_CalicoPodIgnoresNetworkIPMode(t *testing.T) {
+	nics := []NICRef{{MAC: "aa:bb:cc:dd:ee:01", NetworkID: "net-1"}}
+	for _, preserve := range []bool{true, false} {
+		want := string(api.NetworkIPModeNone)
+		if preserve {
+			want = string(api.NetworkIPModePreserve)
+		}
+		for _, mode := range []api.NetworkIPMode{"", api.NetworkIPModePreserve, api.NetworkIPModeDHCP, api.NetworkIPModeNone} {
+			nm := &api.NetworkMap{Spec: api.NetworkMapSpec{Map: []api.NetworkPair{{
+				Source:        api.NetworkSourceRef{Ref: ref.Ref{ID: "net-1"}},
+				Destination:   api.DestinationNetwork{Type: Pod, Calico: &api.CalicoDestination{}},
+				NetworkIPMode: mode,
+			}}}}
+			if got := ResolveNICModes(nics, nm, preserve)["aa:bb:cc:dd:ee:01"]; got != want {
+				t.Errorf("preserveStaticIPs=%v networkIPMode=%q: got %q, want %q", preserve, mode, got, want)
+			}
+		}
+	}
+}
 
 func TestSetCalicoMAC(t *testing.T) {
 	tests := []struct {

@@ -72,6 +72,30 @@ var _ = Describe("NetworkMap Calico validation", func() {
 		Expect(mp.Status.HasCondition(CalicoPrimaryInvalid)).To(BeFalse())
 	})
 
+	It("warns that networkIPMode is ignored on a Calico pod entry, whatever its value", func() {
+		for _, mode := range []api.NetworkIPMode{api.NetworkIPModePreserve, api.NetworkIPModeDHCP, api.NetworkIPModeNone} {
+			pair := calicoPodPair
+			pair.NetworkIPMode = mode
+			mp := makeMap(api.VSphere, pair)
+			warnCalicoIPModeIgnored(mp)
+			cond := mp.Status.FindCondition(NetworkIPModeIgnored)
+			Expect(cond).NotTo(BeNil(), string(mode))
+			Expect(cond.Category).To(Equal(Warn))
+			Expect(cond.Message).To(ContainSubstring("ignored"))
+			Expect(cond.Message).To(ContainSubstring("preserveStaticIPs"))
+		}
+	})
+
+	It("does not warn about networkIPMode when it is unset or the entry is not Calico", func() {
+		plain := podPair
+		plain.NetworkIPMode = api.NetworkIPModeDHCP
+		for _, pair := range []api.NetworkPair{calicoPodPair, plain} {
+			mp := makeMap(api.VSphere, pair)
+			warnCalicoIPModeIgnored(mp)
+			Expect(mp.Status.HasCondition(NetworkIPModeIgnored)).To(BeFalse())
+		}
+	})
+
 	It("keeps the condition vocabulary aligned with the plan controller", func() {
 		// The plan controller folds per-VM issues into conditions of the
 		// same names; a rename on either side would fork the user-facing
