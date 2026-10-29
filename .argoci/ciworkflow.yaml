@@ -1,0 +1,49 @@
+# PR and merge CI: lint, unit tests and generated-file checks, run as parallel
+# steps. Each step runs one make target, so a failing step reproduces locally
+# with the same `make` command. Every step runs on every PR: the suite is small
+# enough that gating steps on the files a PR changes isn't worth it yet.
+version: condensed
+generateName: forklift-
+
+# Catches a hang outside any step's own timeout.
+timeout: 1h
+
+globalPrologue: |
+  # The checkout can belong to a different user than the step runs as, and git
+  # refuses to read such a repository unless told it is safe.
+  git config --global --add safe.directory '*'
+  export GOPROXY="${GOPROXY:-https://proxy.golang.org|direct}"
+
+defaults:
+  # Every step runs in the calico/go-build image that config.yaml pins.
+  useGoBuild: true
+  requests: {cpu: 3500m, memory: 8Gi}
+  timeout: 30m
+
+# The stock image lacks libvirt-devel, netplan, the docker CLI, dash and
+# gettext, so the checks that need them are switched off through the CI_*
+# variables in the Makefile. Each step says which.
+steps:
+  - name: lint
+    commands: |
+      # Forklift's pinned golangci-lint can't analyse the image's Go release, so
+      # use the one the image ships. Off: the libvirt-linked packages
+      # (libvirt-devel), which can't be type-checked without libvirt headers.
+      make ci-lint GOLANGCI_LINT_BIN=/usr/local/bin/golangci-lint CI_LIBVIRT=false
+
+  - name: unit
+    commands: |
+      # Off: the libvirt-linked Go packages (libvirt-devel), the dash re-run of
+      # the guest network-script tests (dash), and the guest cases that need
+      # netplan (systemd) or run ifquery in a container (network-interfaces).
+      make ci-ut CI_LIBVIRT=false CI_GUEST_SHELLS=bash \
+        CI_GUEST_SKIP="systemd network-interfaces"
+    epilogue: |
+      # Epilogues don't inherit the commands' `cd` or exports.
+      cd "${CI_HOME}/${CI_GIT_DIR}"
+      artifact push job cover.out --destination coverage || true
+
+  - name: generated
+    commands: |
+      # Off: rendering operator/.*_manifests (envsubst, from gettext).
+      make ci-generate CI_RENDER_MANIFESTS=false

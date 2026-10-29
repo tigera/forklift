@@ -1243,7 +1243,7 @@ var _ = Describe("vSphere builder", func() {
 				},
 			}
 			builder.Plan.Spec.PreserveStaticIPs = preserveIPs
-			builder.Context.Map.Network = &v1beta1.NetworkMap{
+			builder.Map.Network = &v1beta1.NetworkMap{
 				Spec: v1beta1.NetworkMapSpec{
 					Map: []v1beta1.NetworkPair{{
 						Source: v1beta1.NetworkSourceRef{Ref: ref.Ref{ID: netID}},
@@ -1349,7 +1349,7 @@ var _ = Describe("vSphere builder", func() {
 			}
 			builder.Source.Inventory = &mockInventory{networks: networks}
 			builder.Plan.Spec.PreserveStaticIPs = preserveIPs
-			builder.Context.Map.Network = &v1beta1.NetworkMap{
+			builder.Map.Network = &v1beta1.NetworkMap{
 				Spec: v1beta1.NetworkMapSpec{Map: mapPairs},
 			}
 			vmNICs := make([]vsphere.NIC, 0, len(nics))
@@ -1486,7 +1486,7 @@ var _ = Describe("vSphere builder", func() {
 				{Source: v1beta1.NetworkSourceRef{Ref: ref.Ref{ID: netID}}, Destination: dest},
 			}
 			pairs = append(pairs, extraPairs...)
-			builder.Context.Map.Network = &v1beta1.NetworkMap{Spec: v1beta1.NetworkMapSpec{Map: pairs}}
+			builder.Map.Network = &v1beta1.NetworkMap{Spec: v1beta1.NetworkMapSpec{Map: pairs}}
 			nics := []vsphere.NIC{{Network: vsphere.Ref{ID: netID}, MAC: nicMAC, DeviceKey: 4001}}
 			nics = append(nics, extraNICs...)
 			gnets := []vsphere.GuestNetwork{{MAC: nicMAC, IP: nicIP, DeviceConfigId: 4001, Origin: ManualOrigin, PrefixLength: 24}}

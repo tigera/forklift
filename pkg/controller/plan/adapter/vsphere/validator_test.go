@@ -37,8 +37,8 @@ import (
 // shared map-scoped function, mirroring how the controllers invoke it.
 func validateCalicoNADsForTest(v *Validator, c client.Client) (planbase.CalicoValidationResult, error) {
 	var pairs []v1beta1.NetworkPair
-	if v.Plan.Referenced.Map.Network != nil {
-		pairs = v.Plan.Referenced.Map.Network.Spec.Map
+	if v.Plan.Map.Network != nil {
+		pairs = v.Plan.Map.Network.Spec.Map
 	}
 	result, err := planbase.ValidateCalicoNADs(context.TODO(), c, pairs, v.Log)
 	if err != nil {
@@ -57,8 +57,8 @@ func validateCalicoNADsForTest(v *Validator, c client.Client) (planbase.CalicoVa
 // the shared map-scoped function.
 func validateCalicoPrimaryForTest(v *Validator, c client.Client) (planbase.CalicoPrimaryValidationResult, error) {
 	var pairs []v1beta1.NetworkPair
-	if v.Plan.Referenced.Map.Network != nil {
-		pairs = v.Plan.Referenced.Map.Network.Spec.Map
+	if v.Plan.Map.Network != nil {
+		pairs = v.Plan.Map.Network.Spec.Map
 	}
 	result, err := planbase.ValidateCalicoPrimary(context.TODO(), c, pairs, v.Log)
 	if err != nil {
@@ -925,7 +925,7 @@ var _ = Describe("vsphere validation tests", func() {
 			}
 			plan := createPlan()
 			plan.Spec.PreserveStaticIPs = preserveIPs
-			plan.Referenced.Map.Network = &v1beta1.NetworkMap{
+			plan.Map.Network = &v1beta1.NetworkMap{
 				Spec: v1beta1.NetworkMapSpec{
 					Map: []v1beta1.NetworkPair{{
 						Source: v1beta1.NetworkSourceRef{Ref: ref.Ref{ID: srcNetID}},
@@ -951,7 +951,7 @@ var _ = Describe("vsphere validation tests", func() {
 		Describe("ValidateCalicoNADs (plan-level)", func() {
 			It("returns empty results when NetworkMap is nil", func() {
 				v, c, _ := setup("10.100.0.5", true)
-				v.Plan.Referenced.Map.Network = nil
+				v.Plan.Map.Network = nil
 				result, err := validateCalicoNADsForTest(v, c)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(result.Issues).To(BeEmpty())
@@ -1201,8 +1201,8 @@ var _ = Describe("vsphere validation tests", func() {
 						makeNftablesFelixConfiguration("Enabled"),
 						makeBGPPeer("vrf-peer", netName),
 					)
-					v.Plan.Referenced.Map.Network.Spec.Map = append(
-						v.Plan.Referenced.Map.Network.Spec.Map,
+					v.Plan.Map.Network.Spec.Map = append(
+						v.Plan.Map.Network.Spec.Map,
 						v1beta1.NetworkPair{
 							Source: v1beta1.NetworkSourceRef{Ref: ref.Ref{ID: "src-2"}},
 							Destination: v1beta1.DestinationNetwork{
@@ -1299,8 +1299,8 @@ var _ = Describe("vsphere validation tests", func() {
 						makeNftablesFelixConfiguration("Enabled"),
 						makeBGPPeer("vrf-peer", netName),
 					)
-					v.Plan.Referenced.Map.Network.Spec.Map = append(
-						v.Plan.Referenced.Map.Network.Spec.Map,
+					v.Plan.Map.Network.Spec.Map = append(
+						v.Plan.Map.Network.Spec.Map,
 						v1beta1.NetworkPair{
 							Source: v1beta1.NetworkSourceRef{Ref: ref.Ref{ID: "src-2"}},
 							Destination: v1beta1.DestinationNetwork{
@@ -1625,8 +1625,8 @@ var _ = Describe("vsphere validation tests", func() {
 						felix,
 						makeBGPPeer("vrf-peer", vrfNetName),
 					)
-					v.Plan.Referenced.Map.Network.Spec.Map = append(
-						v.Plan.Referenced.Map.Network.Spec.Map,
+					v.Plan.Map.Network.Spec.Map = append(
+						v.Plan.Map.Network.Spec.Map,
 						v1beta1.NetworkPair{
 							Source: v1beta1.NetworkSourceRef{Ref: ref.Ref{ID: "src-2"}},
 							Destination: v1beta1.DestinationNetwork{
@@ -1727,8 +1727,8 @@ var _ = Describe("vsphere validation tests", func() {
 					makeIPPool("vlan100-pool", "10.100.0.0/24", "L2Workload"),
 					makeFelixConfiguration(false),
 				)
-				v.Plan.Referenced.Map.Network.Spec.Map = append(
-					v.Plan.Referenced.Map.Network.Spec.Map,
+				v.Plan.Map.Network.Spec.Map = append(
+					v.Plan.Map.Network.Spec.Map,
 					v1beta1.NetworkPair{
 						Source: v1beta1.NetworkSourceRef{Ref: ref.Ref{ID: "src-2"}},
 						Destination: v1beta1.DestinationNetwork{
@@ -1807,8 +1807,8 @@ var _ = Describe("vsphere validation tests", func() {
 				// dedup, ValidateCalicoNADs would emit NetworkNotFound twice and
 				// double-fetch the NAD.
 				v, c, _ := setup("10.100.0.5", true, makeCalicoNAD(100))
-				v.Plan.Referenced.Map.Network.Spec.Map = append(
-					v.Plan.Referenced.Map.Network.Spec.Map,
+				v.Plan.Map.Network.Spec.Map = append(
+					v.Plan.Map.Network.Spec.Map,
 					v1beta1.NetworkPair{
 						Source: v1beta1.NetworkSourceRef{Ref: ref.Ref{ID: "src-2"}},
 						Destination: v1beta1.DestinationNetwork{
@@ -1862,7 +1862,7 @@ var _ = Describe("vsphere validation tests", func() {
 					},
 				}
 				v, c, _ := setup("10.100.0.5", true, ovnNAD)
-				v.Plan.Referenced.Map.Network.Spec.Map[0].Destination.Name = "ovn-nad"
+				v.Plan.Map.Network.Spec.Map[0].Destination.Name = "ovn-nad"
 				result, err := validateCalicoNADsForTest(v, c)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(result.Issues).To(BeEmpty())
@@ -1908,8 +1908,8 @@ var _ = Describe("vsphere validation tests", func() {
 					makeCalicoNAD(100), // existing nadName, references missing Network "vlan100"
 					l3NAD,
 				)
-				v.Plan.Referenced.Map.Network.Spec.Map = append(
-					v.Plan.Referenced.Map.Network.Spec.Map,
+				v.Plan.Map.Network.Spec.Map = append(
+					v.Plan.Map.Network.Spec.Map,
 					v1beta1.NetworkPair{
 						Source: v1beta1.NetworkSourceRef{Ref: ref.Ref{ID: l3SrcID}},
 						Destination: v1beta1.DestinationNetwork{
@@ -1972,8 +1972,8 @@ var _ = Describe("vsphere validation tests", func() {
 					healthyNAD, healthyNet,
 					makeIPPool("vlan200-pool", "10.200.0.0/24", "L2Workload"),
 				)
-				v.Plan.Referenced.Map.Network.Spec.Map = append(
-					v.Plan.Referenced.Map.Network.Spec.Map,
+				v.Plan.Map.Network.Spec.Map = append(
+					v.Plan.Map.Network.Spec.Map,
 					v1beta1.NetworkPair{
 						Source: v1beta1.NetworkSourceRef{Ref: ref.Ref{ID: healthySrcID}},
 						Destination: v1beta1.DestinationNetwork{
@@ -2163,7 +2163,7 @@ var _ = Describe("vsphere validation tests", func() {
 				vm.GuestNetworks = append(vm.GuestNetworks, vsphere.GuestNetwork{IP: "192.168.1.5", DeviceConfigId: 4002})
 				v.Source.Inventory.(*mockInventory).vm = vm
 
-				v.Plan.Referenced.Map.Network.Spec.Map = []v1beta1.NetworkPair{
+				v.Plan.Map.Network.Spec.Map = []v1beta1.NetworkPair{
 					{Source: v1beta1.NetworkSourceRef{Ref: ref.Ref{ID: srcNetID}}, Destination: v1beta1.DestinationNetwork{
 						Type: planbase.Multus, Namespace: nadNS, Name: nadAName,
 					}},
@@ -2294,7 +2294,7 @@ var _ = Describe("vsphere validation tests", func() {
 				{Source: v1beta1.NetworkSourceRef{Ref: ref.Ref{ID: srcNetID}}, Destination: dest},
 			}
 			pairs = append(pairs, extraPairs...)
-			plan.Referenced.Map.Network = &v1beta1.NetworkMap{
+			plan.Map.Network = &v1beta1.NetworkMap{
 				Spec: v1beta1.NetworkMapSpec{Map: pairs},
 			}
 			ctx := plancontext.Context{Plan: plan, Source: plancontext.Source{Inventory: inventory}}
@@ -2312,7 +2312,7 @@ var _ = Describe("vsphere validation tests", func() {
 		Describe("ValidateCalicoPrimary (plan-level)", func() {
 			It("returns empty results when NetworkMap is nil", func() {
 				v, c, _ := setupPrimary("10.100.0.5", false, v1beta1.DestinationNetwork{Type: planbase.Pod, Calico: &v1beta1.CalicoDestination{}}, nil, true)
-				v.Plan.Referenced.Map.Network = nil
+				v.Plan.Map.Network = nil
 				result, err := validateCalicoPrimaryForTest(v, c)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(result.Issues).To(BeEmpty())

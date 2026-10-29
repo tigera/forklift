@@ -26,7 +26,7 @@ test_dir() {
     export WICKED_DIR="$TEST_DIR/var/lib/wicked"
 
     export IFQUERY_CMD="
-      podman run
+      ${CONTAINER_CMD:-podman} run
       -v $TEST_DIR/etc/network:/etc/network
       quay.io/kubev2v/ifquery:latest ifquery
     "
@@ -88,9 +88,23 @@ test_dir() {
     rm -rf "$TEST_DIR"
 }
 
+# GUEST_TEST_SKIP lists case-name prefixes to skip, for environments that lack
+# a tool some cases need (e.g. "systemd" needs netplan).
+skip_dir() {
+    for prefix in ${GUEST_TEST_SKIP:-}; do
+        case "$(basename "$1")" in "$prefix"*) return 0 ;; esac
+    done
+    return 1
+}
+
 test_dirs() {
     for THE_DIR in $@;
-    do test_dir "$THE_DIR";
+    do
+        if skip_dir "$THE_DIR"; then
+            echo "SKIP: $(basename "$THE_DIR")"
+            continue
+        fi
+        test_dir "$THE_DIR";
     done
 }
 
