@@ -8,6 +8,14 @@ generateName: forklift-
 # Catches a hang outside any step's own timeout.
 timeout: 1h
 
+# Buttons on each run. A promotion runs at the source run's commit, and
+# inherits nothing from this workflow.
+promotions:
+  - name: hashrelease
+    workflowFile: .argoci/promotions/hashrelease.yaml
+    description: Build a hashrelease from this commit and render its manifests
+    requires: none
+
 globalPrologue: |
   # The checkout can belong to a different user than the step runs as, and git
   # refuses to read such a repository unless told it is safe.

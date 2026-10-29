@@ -9,7 +9,7 @@ GIT_SHA=${CI_GIT_SHA:-$(git rev-parse HEAD)}
 # The console plugin uses the version as its manifest version, which the
 # console requires to be semver, so the tag is one too. 0.0.0 keeps a
 # hashrelease from ever sorting after a real release.
-TAG=${TAG:-v0.0.0-main.g${GIT_SHA:0:12}}
+TAG=${TAG:-v0.0.0-hashrelease.g${GIT_SHA:0:12}}
 VERSION=${TAG#v}
 
 REGISTRY=${REGISTRY:-quay.io}

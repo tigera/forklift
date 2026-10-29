@@ -16,12 +16,3 @@ workflows:
     runWhen:
       alwaysRunOnPR: true
       alwaysRunOnMerge: true
-
-  # Separate, so a hashrelease failing doesn't colour the checks' status. Runs on
-  # every merge; its steps run only for main.
-  - name: hashrelease
-    workflowFile: .argoci/publish/hashrelease.yaml
-    runWhen:
-      alwaysRunOnMerge: true
-      # DO NOT MERGE: runs the hashrelease on this PR to test it.
-      alwaysRunOnPR: true

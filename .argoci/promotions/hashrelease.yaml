@@ -1,7 +1,8 @@
-# Builds a hashrelease from each commit merged to main: every image a release
+# Builds a hashrelease from the promoted run's commit: every image a release
 # ships, each checked against the commit it was built from, and the install
-# manifests that name them. Pushing the images isn't set up yet, so the push
-# only lists them.
+# manifests that name them. A promotion, not a run on every merge, because the
+# full build is expensive. Pushing the images isn't set up yet, so the push only
+# lists them.
 version: condensed
 generateName: hashrelease-
 
