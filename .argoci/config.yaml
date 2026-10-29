@@ -23,3 +23,5 @@ workflows:
     workflowFile: .argoci/publish/hashrelease.yaml
     runWhen:
       alwaysRunOnMerge: true
+      # DO NOT MERGE: runs the hashrelease on this PR to test it.
+      alwaysRunOnPR: true

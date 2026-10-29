@@ -26,7 +26,6 @@ steps:
   # One step, because the images live in its docker daemon until they're pushed.
   # The virt-v2v and deep-inspection images are amd64-only, as is the build.
   - name: images
-    when: GIT_BRANCH == 'main'
     jobSize: large
     requests: {cpu: 7000m, memory: 12Gi}
     timeout: 3h
@@ -43,7 +42,6 @@ steps:
   # their checks.
   - name: manifests
     depends: [images]
-    when: GIT_BRANCH == 'main'
     useGoBuild: true
     requests: {cpu: 500m, memory: 1Gi}
     commands: |
