@@ -1,0 +1,54 @@
+# Builds a hashrelease from each commit merged to main: every image a release
+# ships, each checked against the commit it was built from, and the install
+# manifests that name them. Pushing the images isn't set up yet, so the push
+# only lists them.
+version: condensed
+generateName: hashrelease-
+
+# Catches a hang outside any step's own timeout.
+timeout: 4h
+
+globalPrologue: |
+  # The checkout can belong to a different user than the step runs as, and git
+  # refuses to read such a repository unless told it is safe.
+  git config --global --add safe.directory '*'
+
+defaults:
+  timeout: 30m
+  env:
+    # Where the images are to be pushed, and so what the manifests name.
+    - name: REGISTRY
+      value: quay.io
+    - name: REGISTRY_ORG
+      value: tigera
+
+steps:
+  # One step, because the images live in its docker daemon until they're pushed.
+  # The virt-v2v and deep-inspection images are amd64-only, as is the build.
+  - name: images
+    when: GIT_BRANCH == 'main'
+    jobSize: large
+    requests: {cpu: 7000m, memory: 12Gi}
+    timeout: 3h
+    services:
+      - docker
+    # Each script runs only if the one before passed, so nothing unchecked is
+    # ever pushed.
+    commands: |
+      .argoci/scripts/hashrelease/build-images.sh &&
+        .argoci/scripts/hashrelease/check-images.sh &&
+        .argoci/scripts/hashrelease/push-images.sh
+
+  # After the images, so manifests are only published for images that passed
+  # their checks.
+  - name: manifests
+    depends: [images]
+    when: GIT_BRANCH == 'main'
+    useGoBuild: true
+    requests: {cpu: 500m, memory: 1Gi}
+    commands: |
+      .argoci/scripts/hashrelease/render-manifests.sh
+    epilogue: |
+      # Epilogues don't inherit the commands' `cd` or exports.
+      cd "${CI_HOME}/${CI_GIT_DIR}"
+      artifact push job _output/hashrelease/manifests --destination manifests || true
