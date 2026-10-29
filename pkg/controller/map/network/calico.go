@@ -6,6 +6,7 @@ import (
 	api "github.com/kubev2v/forklift/pkg/apis/forklift/v1beta1"
 	planbase "github.com/kubev2v/forklift/pkg/controller/plan/adapter/base"
 	ocp "github.com/kubev2v/forklift/pkg/lib/client/openshift"
+	libcnd "github.com/kubev2v/forklift/pkg/lib/condition"
 	liberr "github.com/kubev2v/forklift/pkg/lib/error"
 	core "k8s.io/api/core/v1"
 	k8sclient "sigs.k8s.io/controller-runtime/pkg/client"
@@ -19,7 +20,34 @@ const (
 	CalicoNetworkWarning = "CalicoNetworkWarning"
 	CalicoPrimaryInvalid = "CalicoPrimaryInvalid"
 	CalicoPrimaryWarning = "CalicoPrimaryWarning"
+	// NetworkIPModeIgnored warns that networkIPMode is set on a Calico pod
+	// entry, where it has no effect: the plan's preserveStaticIPs decides
+	// whether the VM keeps its source IPs.
+	NetworkIPModeIgnored = "NetworkIPModeIgnored"
 )
+
+// warnCalicoIPModeIgnored sets the NetworkIPModeIgnored warning for every
+// Calico pod entry that sets networkIPMode, whatever its value.
+func warnCalicoIPModeIgnored(mp *api.NetworkMap) {
+	ignored := []string{}
+	for _, entry := range mp.Spec.Map {
+		if entry.Destination.Type == Pod && entry.Destination.Calico != nil && entry.NetworkIPMode != "" {
+			ignored = append(ignored, entry.Source.String())
+		}
+	}
+	if len(ignored) == 0 {
+		return
+	}
+	mp.Status.SetCondition(libcnd.Condition{
+		Type:     NetworkIPModeIgnored,
+		Status:   True,
+		Reason:   IgnoredForCalico,
+		Category: Warn,
+		Message: "networkIPMode is ignored on Calico pod network mappings. " +
+			"Whether the VM keeps its source IP addresses follows the plan's preserveStaticIPs.",
+		Items: ignored,
+	})
+}
 
 // validateCalico is the Calico leg of validateDestination: it validates the
 // map's Calico destinations against the destination cluster — the (at most

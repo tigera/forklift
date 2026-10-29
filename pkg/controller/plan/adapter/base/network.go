@@ -79,6 +79,11 @@ func ResolveNICModes(nics []NICRef, networkMap *api.NetworkMap, preserveStaticIP
 			continue
 		}
 		mode := string(pair.NetworkIPMode)
+		if pair.Destination.Type == Pod && pair.Destination.Calico != nil {
+			// A Calico pod entry ignores networkIPMode: the guest follows the
+			// plan's preserveStaticIPs, as the pod's IP does.
+			mode = ""
+		}
 		if pair.Destination.Type == Ignored {
 			mode = string(api.NetworkIPModeNone)
 		} else if mode == "" {
