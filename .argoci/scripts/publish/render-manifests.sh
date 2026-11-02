@@ -1,5 +1,5 @@
 #!/bin/bash
-# Renders the install manifests for the hashrelease's images into
+# Renders the install manifests for the published images into
 # ${OUT}/manifests: one operator manifest and ForkliftController CR per
 # platform, and the guest-conversion profiles. Fails if a rendered file is
 # missing or wrong.
@@ -7,7 +7,7 @@
 # shellcheck disable=SC2034
 set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
-. .argoci/scripts/hashrelease/env.sh
+. .argoci/scripts/publish/env.sh
 
 manifests=${OUT}/manifests
 overlay=${OUT}/overlay

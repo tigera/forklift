@@ -1,14 +1,12 @@
 #!/bin/bash
 # Checks each image build-images.sh produced came from the commit it should
 # have: this repo's images from the commit being built, and the forks' images
-# from the commits build-images.sh recorded. Also checks each console plugin
-# loads on the consoles it is built for, and that no image has package updates
-# left to install. Fails if any check does.
+# from the commits forks.env pins. Also checks each console plugin loads on
+# the consoles it is built for, and that no image has package updates left to
+# install. Fails if any check does.
 set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
-. .argoci/scripts/hashrelease/env.sh
-# shellcheck source=/dev/null # written by build-images.sh
-. "${SOURCES}"
+. .argoci/scripts/publish/env.sh
 
 failed=0
 
