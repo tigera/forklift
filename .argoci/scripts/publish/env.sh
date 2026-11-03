@@ -6,10 +6,25 @@
 # The commit Argo checked out. Run by hand, the tree's own HEAD.
 GIT_SHA=${CI_GIT_SHA:-$(git rev-parse HEAD)}
 
-# The console plugin uses the version as its manifest version, which the
-# console requires to be semver, so the tag is one too. 0.0.0 keeps a dev
-# build from ever sorting after a real release.
-TAG=${TAG:-v0.0.0-dev.g${GIT_SHA:0:12}}
+# The branch the commit was merged to. Run by hand, the tree's own branch.
+GIT_BRANCH=${CI_GIT_BRANCH:-$(git rev-parse --abbrev-ref HEAD)}
+
+# The tag names the release the branch leads up to: rel/v3.24.0-3 builds
+# v3.24.0-3-dev.g<commit>. Other branches have no release to name, so they
+# build v0.0.0-dev.g<commit>. The console plugin uses the version as its
+# manifest version, which the console requires to be semver, so a rel/ branch
+# whose name isn't a version fails here.
+if [ -z "${TAG:-}" ]; then
+  case ${GIT_BRANCH} in
+    rel/*)
+      TAG=${GIT_BRANCH#rel/}
+      [[ ${TAG} =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]] \
+        || { echo "branch ${GIT_BRANCH} is not named rel/v<semver>" >&2; return 1; }
+      ;;
+    *) TAG=v0.0.0 ;;
+  esac
+  TAG=${TAG}-dev.g${GIT_SHA:0:12}
+fi
 VERSION=${TAG#v}
 
 REGISTRY=${REGISTRY:-quay.io}
