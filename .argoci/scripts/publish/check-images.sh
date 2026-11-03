@@ -64,7 +64,8 @@ done
 pending_updates='if command -v dnf >/dev/null 2>&1; then dnf -q check-update >/dev/null 2>&1; rc=$?; else microdnf -y --assumeno update >/tmp/u 2>&1; rc=$?; grep -qE "^ *Upgrading|Upgrading:" /tmp/u && rc=100; fi
 case $rc in 0) echo CLEAN;; 100) echo PENDING;; *) echo "ERROR rc=$rc";; esac'
 for image in $(all_images); do
-  result=$(docker run --rm --user 0 --entrypoint sh "${image}" -c "${pending_updates}")
+  result=$(docker run --rm --user 0 --entrypoint sh "${image}" -c "${pending_updates}") \
+    || result="ERROR the image could not run the check"
   if [ "${result}" = CLEAN ]; then
     echo "OK   ${image} has no package updates left"
   else
