@@ -28,7 +28,7 @@ fi
 VERSION=${TAG#v}
 
 REGISTRY=${REGISTRY:-quay.io}
-REGISTRY_ORG=${REGISTRY_ORG:-tigeradev/forklift}
+REGISTRY_ORG=${REGISTRY_ORG:-tigeradev}
 REL_IMG=${REGISTRY}/${REGISTRY_ORG}
 
 # The namespace the manifests install into.
