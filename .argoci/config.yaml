@@ -16,3 +16,10 @@ workflows:
     runWhen:
       alwaysRunOnPR: true
       alwaysRunOnMerge: true
+
+  # Builds and pushes the dev images for each merge to main or rel/*. Never on
+  # a PR, since it holds the push credential.
+  - name: publish-images
+    workflowFile: .argoci/publish/images.yaml
+    runWhen:
+      alwaysRunOnMerge: true
