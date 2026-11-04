@@ -21,7 +21,7 @@ defaults:
     - name: REGISTRY
       value: quay.io
     - name: REGISTRY_ORG
-      value: tigeradev/forklift
+      value: tigeradev
 
 steps:
   # One step, because the images live in its docker daemon until they're pushed.
