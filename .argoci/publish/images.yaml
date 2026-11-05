@@ -4,7 +4,7 @@
 # PRs, because the full build is expensive, and so the push credential only
 # ever meets merged code.
 version: condensed
-generateName: publish-images-
+generateName: forklift-publish-images-
 
 # Catches a hang outside any step's own timeout.
 timeout: 4h
