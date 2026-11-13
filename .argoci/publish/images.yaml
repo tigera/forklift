@@ -1,0 +1,64 @@
+# Publishes dev images and install manifests for each commit merged to main or
+# a rel/* branch: every image a release ships, each checked against the commit
+# it was built from, and the install manifests that name them. On merge, not on
+# PRs, because the full build is expensive, and so the push credential only
+# ever meets merged code.
+version: condensed
+generateName: forklift-publish-images-
+
+# Catches a hang outside any step's own timeout.
+timeout: 4h
+
+globalPrologue: |
+  # The checkout can belong to a different user than the step runs as, and git
+  # refuses to read such a repository unless told it is safe.
+  git config --global --add safe.directory '*'
+
+defaults:
+  timeout: 30m
+  env:
+    # Where the images are pushed, and so what the manifests name.
+    - name: REGISTRY
+      value: quay.io
+    - name: REGISTRY_ORG
+      value: tigeradev
+
+steps:
+  # One step, because the images live in its docker daemon until they're pushed.
+  # The virt-v2v and deep-inspection images are amd64-only, as is the build.
+  - name: images
+    # Only merges to main or a rel/* branch publish.
+    when: GIT_REF_TYPE == 'MERGE' && (GIT_BRANCH == 'main' || GIT_BRANCH =~ '^rel/')
+    jobSize: large
+    requests: {cpu: 7000m, memory: 12Gi}
+    timeout: 3h
+    services:
+      - docker
+    # The push credential, in this step only.
+    secretBundles:
+      - name: quay-tigeradev-hashrelease
+        keys:
+          - name: QUAY_USER
+          - name: QUAY_TOKEN
+    # Steps stop at the first command that fails, so nothing unchecked is ever
+    # pushed. The build and checks are started without QUAY_USER or QUAY_TOKEN
+    # in their environment, and the login comes after them.
+    commands: |
+      env -u QUAY_USER -u QUAY_TOKEN .argoci/scripts/publish/build-images.sh
+      env -u QUAY_USER -u QUAY_TOKEN .argoci/scripts/publish/check-images.sh
+      echo "$QUAY_TOKEN" | docker login --username "$QUAY_USER" --password-stdin quay.io
+      .argoci/scripts/publish/push-images.sh
+
+  # After the images, so manifests are only published for images that were
+  # pushed.
+  - name: manifests
+    depends: [images]
+    when: GIT_REF_TYPE == 'MERGE' && (GIT_BRANCH == 'main' || GIT_BRANCH =~ '^rel/')
+    useGoBuild: true
+    requests: {cpu: 500m, memory: 1Gi}
+    commands: |
+      .argoci/scripts/publish/render-manifests.sh
+    epilogue: |
+      # Epilogues don't inherit the commands' `cd` or exports.
+      cd "${CI_HOME}/${CI_GIT_DIR}"
+      artifact push job _output/publish/manifests --destination manifests || true

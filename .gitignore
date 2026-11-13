@@ -85,3 +85,6 @@ gha-creds-*.json
 
 # developer-private test scenarios (verification, bug reproduction, etc.)
 tests/scenarios/
+
+# What the publish scripts in .argoci/scripts/publish produce
+/_output/
