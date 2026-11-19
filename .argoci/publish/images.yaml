@@ -57,15 +57,16 @@ steps:
     when: GIT_REF_TYPE == 'MERGE' && (GIT_BRANCH == 'main' || GIT_BRANCH =~ '^rel/')
     useGoBuild: true
     requests: {cpu: 500m, memory: 1Gi}
+    # The push credential for the manifests' registry, read only by the login.
     secretBundles:
-      - name: quay-tigeradev-hashrelease
+      - name: google-service-account-for-gcr
         keys:
-          - name: QUAY_USER
-          - name: QUAY_TOKEN
+          - name: google-service-account-for-gcr-key.json
+            localFile: /root/secrets/google-service-account-for-gcr-key.json
     commands: |
-      env -u QUAY_USER -u QUAY_TOKEN .argoci/scripts/publish/render-manifests.sh
-      env -u QUAY_USER -u QUAY_TOKEN .argoci/scripts/publish/install-oras.sh
-      echo "$QUAY_TOKEN" | _output/publish/bin/oras login --username "$QUAY_USER" --password-stdin quay.io
+      .argoci/scripts/publish/render-manifests.sh
+      .argoci/scripts/publish/install-oras.sh
+      _output/publish/bin/oras login --username _json_key --password-stdin gcr.io < /root/secrets/google-service-account-for-gcr-key.json
       .argoci/scripts/publish/push-manifests.sh
     epilogue: |
       # Epilogues don't inherit the commands' `cd` or exports.

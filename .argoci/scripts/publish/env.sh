@@ -41,7 +41,9 @@ ORAS=${OUT}/bin/oras
 
 # The install manifests render-manifests.sh writes. They're published as one
 # OCI artifact under the images' tag, which Calico Enterprise hashreleases pull
-# by tag; consumers rely on these names, so change them deliberately.
+# by tag; consumers rely on these names, so change them deliberately. The
+# artifact goes to the private registry the hashreleases already read, not to
+# REGISTRY with the images, which clusters must pull without credentials.
 MANIFEST_FILES=(
   forklift-operator-ocp421.yaml
   forklift-operator-ocp422.yaml
@@ -51,7 +53,8 @@ MANIFEST_FILES=(
   forklift-controller-kubernetes.yaml
   forklift-virt-v2v-profiles.yaml
 )
-MANIFESTS_REF=${REL_IMG}/forklift-manifests:${TAG}
+MANIFESTS_REPO=${MANIFESTS_REPO:-gcr.io/unique-caldron-775/cnx/tigera/forklift-manifests}
+MANIFESTS_REF=${MANIFESTS_REPO}:${TAG}
 MANIFESTS_ARTIFACT_TYPE=application/vnd.tigera.forklift.manifests
 
 # The images built from this repo, as "<make target> <image name>". Each one's
