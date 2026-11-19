@@ -50,14 +50,23 @@ steps:
       .argoci/scripts/publish/push-images.sh
 
   # After the images, so manifests are only published for images that were
-  # pushed.
+  # pushed. The quay artifact is what consumers fetch, so a failed push fails
+  # the run; the job artifact below is only for reading a run's output.
   - name: manifests
     depends: [images]
     when: GIT_REF_TYPE == 'MERGE' && (GIT_BRANCH == 'main' || GIT_BRANCH =~ '^rel/')
     useGoBuild: true
     requests: {cpu: 500m, memory: 1Gi}
+    secretBundles:
+      - name: quay-tigeradev-hashrelease
+        keys:
+          - name: QUAY_USER
+          - name: QUAY_TOKEN
     commands: |
-      .argoci/scripts/publish/render-manifests.sh
+      env -u QUAY_USER -u QUAY_TOKEN .argoci/scripts/publish/render-manifests.sh
+      env -u QUAY_USER -u QUAY_TOKEN .argoci/scripts/publish/install-oras.sh
+      echo "$QUAY_TOKEN" | _output/publish/bin/oras login --username "$QUAY_USER" --password-stdin quay.io
+      .argoci/scripts/publish/push-manifests.sh
     epilogue: |
       # Epilogues don't inherit the commands' `cd` or exports.
       cd "${CI_HOME}/${CI_GIT_DIR}"
