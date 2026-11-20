@@ -72,5 +72,6 @@ steps:
       env -u GCR_KEY .argoci/scripts/publish/push-manifests.sh
     epilogue: |
       # Epilogues don't inherit the commands' `cd` or exports.
+      unset GCR_KEY
       cd "${CI_HOME}/${CI_GIT_DIR}"
-      env -u GCR_KEY artifact push job _output/publish/manifests --destination manifests || true
+      artifact push job _output/publish/manifests --destination manifests || true
