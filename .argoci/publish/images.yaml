@@ -50,7 +50,7 @@ steps:
       .argoci/scripts/publish/push-images.sh
 
   # After the images, so manifests are only published for images that were
-  # pushed. The quay artifact is what consumers fetch, so a failed push fails
+  # pushed. The gcr artifact is what consumers fetch, so a failed push fails
   # the run; the job artifact below is only for reading a run's output.
   - name: manifests
     depends: [images]
@@ -58,16 +58,18 @@ steps:
     useGoBuild: true
     requests: {cpu: 500m, memory: 1Gi}
     # The push credential for the manifests' registry, read only by the login.
+    # An env var, not a file under /root: go-build may run the step as a
+    # non-root user.
     secretBundles:
       - name: google-service-account-for-gcr
         keys:
           - name: google-service-account-for-gcr-key.json
-            localFile: /root/secrets/google-service-account-for-gcr-key.json
+            as: GCR_KEY
     commands: |
-      .argoci/scripts/publish/render-manifests.sh
-      .argoci/scripts/publish/install-oras.sh
-      _output/publish/bin/oras login --username _json_key --password-stdin gcr.io < /root/secrets/google-service-account-for-gcr-key.json
-      .argoci/scripts/publish/push-manifests.sh
+      env -u GCR_KEY .argoci/scripts/publish/render-manifests.sh
+      env -u GCR_KEY .argoci/scripts/publish/install-oras.sh
+      printenv GCR_KEY | _output/publish/bin/oras login --username _json_key --password-stdin gcr.io
+      env -u GCR_KEY .argoci/scripts/publish/push-manifests.sh
     epilogue: |
       # Epilogues don't inherit the commands' `cd` or exports.
       cd "${CI_HOME}/${CI_GIT_DIR}"
