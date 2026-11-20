@@ -37,6 +37,26 @@ NS=${NS:-konveyor-forklift}
 # Where the scripts keep the forks' checkouts and write what they produce.
 OUT=${OUT:-$(git rev-parse --show-toplevel)/_output/publish}
 
+ORAS=${OUT}/bin/oras
+
+# The install manifests render-manifests.sh writes. They're published as one
+# OCI artifact under the images' tag, which Calico Enterprise hashreleases pull
+# by tag; consumers rely on these names, so change them deliberately. The
+# artifact goes to the private registry the hashreleases already read, not to
+# REGISTRY with the images, which clusters must pull without credentials.
+MANIFEST_FILES=(
+  forklift-operator-ocp421.yaml
+  forklift-operator-ocp422.yaml
+  forklift-operator-kubernetes.yaml
+  forklift-controller-ocp421.yaml
+  forklift-controller-ocp422.yaml
+  forklift-controller-kubernetes.yaml
+  forklift-virt-v2v-profiles.yaml
+)
+MANIFESTS_REPO=${MANIFESTS_REPO:-gcr.io/unique-caldron-775/cnx/tigera/forklift-manifests}
+MANIFESTS_REF=${MANIFESTS_REPO}:${TAG}
+MANIFESTS_ARTIFACT_TYPE=application/vnd.tigera.forklift.manifests
+
 # The images built from this repo, as "<make target> <image name>". Each one's
 # Containerfile stamps org.opencontainers.image.revision with the commit.
 TREE_IMAGES="
