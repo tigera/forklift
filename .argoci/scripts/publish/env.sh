@@ -38,6 +38,9 @@ NS=${NS:-konveyor-forklift}
 OUT=${OUT:-$(git rev-parse --show-toplevel)/_output/publish}
 
 ORAS=${OUT}/bin/oras
+# oras's login, kept out of $HOME and out of manifests/, so the step can delete
+# it once the push is done.
+ORAS_REGISTRY_CONFIG=${OUT}/registry-auth.json
 
 # The install manifests render-manifests.sh writes. They're published as one
 # OCI artifact under the images' tag, which Calico Enterprise hashreleases pull
