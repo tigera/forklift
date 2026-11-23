@@ -2,10 +2,12 @@
 # Pushes the rendered manifests to ${MANIFESTS_REF} as one OCI artifact, under
 # the same tag as the images they name, so a consumer can fetch them by tag
 # from a stable place. Expects the login to have written
-# ${ORAS_REGISTRY_CONFIG}; this script never handles a credential.
+# ${ORAS_REGISTRY_CONFIG}, and deletes it on exit, pass or fail, so the
+# credential is on disk only for the push.
 set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
 . .argoci/scripts/publish/env.sh
+trap 'rm -f "${ORAS_REGISTRY_CONFIG}"' EXIT
 
 cd "${OUT}/manifests"
 for f in "${MANIFEST_FILES[@]}"; do

@@ -58,7 +58,7 @@ steps:
     useGoBuild: true
     requests: {cpu: 500m, memory: 1Gi}
     # The push credential for the manifests' registry, read only by the login,
-    # which writes it to a file the epilogue deletes.
+    # which writes it to a file the push deletes.
     # An env var, not a file under /root: go-build may run the step as a
     # non-root user.
     secretBundles:
@@ -69,11 +69,12 @@ steps:
     commands: |
       env -u GCR_KEY .argoci/scripts/publish/render-manifests.sh
       env -u GCR_KEY .argoci/scripts/publish/install-oras.sh
-      printenv GCR_KEY | _output/publish/bin/oras login --registry-config _output/publish/registry-auth.json --username _json_key --password-stdin gcr.io
+      printenv GCR_KEY | _output/publish/bin/oras login --registry-config /tmp/forklift-registry-auth.json --username _json_key --password-stdin gcr.io
       env -u GCR_KEY .argoci/scripts/publish/push-manifests.sh
     epilogue: |
       # Epilogues don't inherit the commands' `cd` or exports.
       unset GCR_KEY
       cd "${CI_HOME}/${CI_GIT_DIR}"
-      rm -f _output/publish/registry-auth.json
+      # Only if the push script never ran; it deletes the login itself.
+      rm -f /tmp/forklift-registry-auth.json
       artifact push job _output/publish/manifests --destination manifests || true
