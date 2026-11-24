@@ -18,9 +18,9 @@ describe_tags=(--tags --match 'v[0-9]*.[0-9]*.[0-9]*')
 if [ -z "${TAG:-}" ]; then
   # Always, since a stale clone can still describe, against an older tag.
   if [ "$(git rev-parse --is-shallow-repository)" = true ]; then
-    fetch_args=(--unshallow --tags)
+    fetch_args=(--unshallow --tags --force)
   else
-    fetch_args=(--tags)
+    fetch_args=(--tags --force)
   fi
   git fetch -q "${fetch_args[@]}" origin \
     || { echo "fetching tags failed; not describing ${GIT_SHA} against stale ones" >&2; return 1; }

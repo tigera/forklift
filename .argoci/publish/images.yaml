@@ -46,7 +46,7 @@ steps:
     commands: |
       # Described once: the manifests step must name exactly the images pushed here.
       TAG=$(env -u QUAY_USER -u QUAY_TOKEN bash -c '. .argoci/scripts/publish/env.sh && echo "${TAG}"')
-      export TAG
+      export TAG="${TAG:?describing the commit failed}"
       env -u QUAY_USER -u QUAY_TOKEN .argoci/scripts/publish/build-images.sh
       env -u QUAY_USER -u QUAY_TOKEN .argoci/scripts/publish/check-images.sh
       echo "$QUAY_TOKEN" | docker login --username "$QUAY_USER" --password-stdin quay.io
