@@ -57,6 +57,9 @@ steps:
     when: GIT_REF_TYPE == 'MERGE' && (GIT_BRANCH == 'main' || GIT_BRANCH =~ '^release-calient-')
     useGoBuild: true
     requests: {cpu: 500m, memory: 1Gi}
+    env:
+      - name: MANIFESTS_REPO
+        value: gcr.io/unique-caldron-775/cnx/tigera/forklift-manifests
     # The push credential for the manifests' registry, read only by the login,
     # which writes it to a file the push deletes.
     # An env var, not a file under /root: go-build may run the step as a

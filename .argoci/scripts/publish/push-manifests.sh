@@ -1,5 +1,5 @@
 #!/bin/bash
-# Pushes the rendered manifests to ${MANIFESTS_REF} as one OCI artifact, under
+# Pushes the rendered manifests to ${MANIFESTS_REPO} as one OCI artifact, under
 # the same tag as the images they name and under ${MANIFESTS_COMMIT_TAG}, so a
 # consumer can fetch them from a stable place. Expects the login to have written
 # ${ORAS_REGISTRY_CONFIG}, and deletes it on exit, pass or fail, so the
@@ -8,6 +8,7 @@ set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
 . .argoci/scripts/publish/env.sh
 trap 'rm -f "${ORAS_REGISTRY_CONFIG}"' EXIT
+: "${MANIFESTS_REPO:?set MANIFESTS_REPO to the repository to push the manifests to}"
 
 cd "${OUT}/manifests"
 for f in "${MANIFEST_FILES[@]}"; do
@@ -22,4 +23,4 @@ extra=$(comm -13 <(printf '%s\n' "${MANIFEST_FILES[@]}" | sort) <(find . -maxdep
 # file name and a pull recreates them flat.
 "${ORAS}" push --registry-config "${ORAS_REGISTRY_CONFIG}" \
   --artifact-type "${MANIFESTS_ARTIFACT_TYPE}" \
-  "${MANIFESTS_REF},${MANIFESTS_COMMIT_TAG}" "${MANIFEST_FILES[@]}"
+  "${MANIFESTS_REPO}:${TAG},${MANIFESTS_COMMIT_TAG}" "${MANIFEST_FILES[@]}"

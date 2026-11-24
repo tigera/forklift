@@ -9,10 +9,10 @@ GIT_SHA=${CI_GIT_SHA:-$(git rev-parse HEAD)}
 # The branch the commit was merged to. Run by hand, the tree's own branch.
 GIT_BRANCH=${CI_GIT_BRANCH:-$(git rev-parse --abbrev-ref HEAD)}
 
-# The tag is the commit's git describe against the dev tags Calico Enterprise's
-# branch cut pushes here, computed exactly as its release tool computes it, so a
-# hashrelease's pin names this build. Describe needs those tags and the history
-# back to them, which a CI checkout may lack. The console plugin uses the
+# The tag is the commit's git describe against the v<semver> dev tags on its
+# branch, with exactly these flags, so anyone who describes the same commit the
+# same way names this build. Describe needs the tags and the history back to
+# them, which a CI checkout may lack. The console plugin uses the
 # version as its manifest version, which the console requires to be semver, so
 # a commit with no dev tag behind it fails here rather than describing as a
 # bare commit.
@@ -44,24 +44,22 @@ ORAS=${OUT}/bin/oras
 # it can pick the credential up, and out of $HOME, so it can be deleted.
 ORAS_REGISTRY_CONFIG=/tmp/forklift-registry-auth.json
 
-# The install manifests render-manifests.sh writes. They're published as one
-# OCI artifact under the images' tag, which Calico Enterprise hashreleases pull
-# by tag; consumers rely on these names, so change them deliberately. The
-# artifact goes to the private registry the hashreleases already read, not to
+OCP_VERSIONS=(4.21 4.22)
+OCP_ERAS=()
+for version in "${OCP_VERSIONS[@]}"; do
+  OCP_ERAS+=("ocp${version//./}")
+done
+
+# The install manifests render-manifests.sh writes, published as one OCI
+# artifact under the images' tag. Consumers fetch them by these names, so
+# change them deliberately. The artifact goes to MANIFESTS_REPO, not to
 # REGISTRY with the images, which clusters must pull without credentials.
-MANIFEST_FILES=(
-  forklift-operator-ocp421.yaml
-  forklift-operator-ocp422.yaml
-  forklift-operator-kubernetes.yaml
-  forklift-controller-ocp421.yaml
-  forklift-controller-ocp422.yaml
-  forklift-controller-kubernetes.yaml
-  forklift-virt-v2v-profiles.yaml
-)
-MANIFESTS_REPO=${MANIFESTS_REPO:-gcr.io/unique-caldron-775/cnx/tigera/forklift-manifests}
-MANIFESTS_REF=${MANIFESTS_REPO}:${TAG}
-# The release tool fetches by commit, not by TAG: a branch cut adds dev tags to
-# commits already published, which changes their describe without a publish.
+MANIFEST_FILES=(forklift-virt-v2v-profiles.yaml)
+for era in "${OCP_ERAS[@]}" kubernetes; do
+  MANIFEST_FILES+=("forklift-operator-${era}.yaml" "forklift-controller-${era}.yaml")
+done
+# Tagging dev tags onto a commit already published changes its describe, and
+# so TAG, without a new publish; this second tag on the artifact doesn't change.
 MANIFESTS_COMMIT_TAG=g${GIT_SHA:0:12}
 MANIFESTS_ARTIFACT_TYPE=application/vnd.tigera.forklift.manifests
 
@@ -97,6 +95,7 @@ CONSOLE_PLUGIN_REPO=https://github.com/tigera/forklift-console-plugin.git
 all_images() {
   echo "${TREE_IMAGES}" | awk -v r="${REL_IMG}" -v t="${TAG}" 'NF {print r "/" $2 ":" t}'
   echo "${REL_IMG}/forklift-must-gather:${TAG}"
-  echo "${REL_IMG}/forklift-console-plugin:${TAG}-ocp421"
-  echo "${REL_IMG}/forklift-console-plugin:${TAG}-ocp422"
+  for era in "${OCP_ERAS[@]}"; do
+    echo "${REL_IMG}/forklift-console-plugin:${TAG}-${era}"
+  done
 }

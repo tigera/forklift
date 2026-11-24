@@ -97,7 +97,7 @@ cat >> "${overlay}-k8s/kustomization.yaml" <<'EOF'
               $patch: delete
 EOF
 
-for era in ocp421 ocp422; do
+for era in "${OCP_ERAS[@]}"; do
   UI_PLUGIN_IMAGE=${REL_IMG}/forklift-console-plugin:${TAG}-${era}
   kubectl kustomize --load-restrictor LoadRestrictionsNone "${overlay}" \
     | fill_placeholders > "${manifests}/forklift-operator-${era}.yaml"
@@ -108,7 +108,7 @@ kubectl kustomize --load-restrictor LoadRestrictionsNone "${overlay}-k8s" \
 
 # The CRs carry only per-cluster choices; every image is in the operator
 # manifest. Plain Kubernetes turns off what needs OpenShift.
-for era in ocp421 ocp422; do
+for era in "${OCP_ERAS[@]}"; do
   cat > "${manifests}/forklift-controller-${era}.yaml" <<EOF
 apiVersion: forklift.konveyor.io/v1beta1
 kind: ForkliftController
@@ -146,7 +146,7 @@ EOF
 # so a missing or empty file would pass them all. Check the files first.
 failed=0
 fail() { echo "FAIL $*"; failed=1; }
-for era in ocp421 ocp422 kubernetes; do
+for era in "${OCP_ERAS[@]}" kubernetes; do
   grep -q '^  name: forklift-operator$' "${manifests}/forklift-operator-${era}.yaml" \
     || fail "forklift-operator-${era}.yaml has no forklift-operator resources"
 done

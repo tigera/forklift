@@ -33,7 +33,7 @@ check_revision "${REL_IMG}/forklift-console-plugin:${TAG}-ocp422" "${CONSOLE_PLU
 # The console loader changed at 4.22, so each era's plugin must call the entry
 # function its consoles expect. Consoles up to 4.21 also reject any plugin ID
 # but <name>@<manifest version>.
-for era in ocp421 ocp422; do
+for era in "${OCP_ERAS[@]}"; do
   image=${REL_IMG}/forklift-console-plugin:${TAG}-${era}
   dir=${OUT}/plugin-files-${era}
   rm -rf "${dir}"
