@@ -52,7 +52,7 @@ steps:
       echo "$QUAY_TOKEN" | docker login --username "$QUAY_USER" --password-stdin quay.io
       .argoci/scripts/publish/push-images.sh
       echo "${TAG}" > /tmp/forklift-publish-tag
-      artifact push workflow /tmp/forklift-publish-tag --destination forklift-publish-tag
+      artifact push workflow --force /tmp/forklift-publish-tag --destination forklift-publish-tag
 
   # After the images, so manifests are only published for images that were
   # pushed. The gcr artifact is what consumers fetch, so a failed push fails

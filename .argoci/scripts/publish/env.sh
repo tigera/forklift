@@ -18,10 +18,12 @@ describe_tags=(--tags --match 'v[0-9]*.[0-9]*.[0-9]*')
 if [ -z "${TAG:-}" ]; then
   # Always, since a stale clone can still describe, against an older tag.
   if [ "$(git rev-parse --is-shallow-repository)" = true ]; then
-    git fetch -q --unshallow --tags origin
+    fetch_args=(--unshallow --tags)
   else
-    git fetch -q --tags origin
+    fetch_args=(--tags)
   fi
+  git fetch -q "${fetch_args[@]}" origin \
+    || { echo "fetching tags failed; not describing ${GIT_SHA} against stale ones" >&2; return 1; }
   TAG=$(git describe "${describe_tags[@]}" --always --long --abbrev=12 "${GIT_SHA}")
   [[ ${TAG} =~ ^v[0-9]+\.[0-9]+\.[0-9]+-[0-9A-Za-z.-]+$ ]] \
     || { echo "${GIT_SHA} describes as ${TAG}; push a v<semver> dev tag behind it" >&2; return 1; }
@@ -43,8 +45,8 @@ ORAS=${OUT}/bin/oras
 # it can pick the credential up, and out of $HOME, so it can be deleted.
 ORAS_REGISTRY_CONFIG=/tmp/forklift-registry-auth.json
 
-# Each version also needs its console plugin's commit in forks.env and its
-# loader check in check-images.sh.
+# Each version also needs a pinned console plugin commit and a loader check;
+# the build fails without either.
 OCP_VERSIONS=(4.21 4.22)
 OCP_ERAS=()
 for version in "${OCP_VERSIONS[@]}"; do
