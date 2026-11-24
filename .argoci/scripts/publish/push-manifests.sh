@@ -1,7 +1,7 @@
 #!/bin/bash
 # Pushes the rendered manifests to ${MANIFESTS_REF} as one OCI artifact, under
-# the same tag as the images they name, so a consumer can fetch them by tag
-# from a stable place. Expects the login to have written
+# the same tag as the images they name and under ${MANIFESTS_COMMIT_TAG}, so a
+# consumer can fetch them from a stable place. Expects the login to have written
 # ${ORAS_REGISTRY_CONFIG}, and deletes it on exit, pass or fail, so the
 # credential is on disk only for the push.
 set -euo pipefail
@@ -22,4 +22,4 @@ extra=$(comm -13 <(printf '%s\n' "${MANIFEST_FILES[@]}" | sort) <(find . -maxdep
 # file name and a pull recreates them flat.
 "${ORAS}" push --registry-config "${ORAS_REGISTRY_CONFIG}" \
   --artifact-type "${MANIFESTS_ARTIFACT_TYPE}" \
-  "${MANIFESTS_REF}" "${MANIFEST_FILES[@]}"
+  "${MANIFESTS_REF},${MANIFESTS_COMMIT_TAG}" "${MANIFEST_FILES[@]}"

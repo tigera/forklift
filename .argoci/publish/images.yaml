@@ -1,5 +1,5 @@
 # Publishes dev images and install manifests for each commit merged to main or
-# a rel/* branch: every image a release ships, each checked against the commit
+# a release-calient-* branch: every image a release ships, each checked against the commit
 # it was built from, and the install manifests that name them. On merge, not on
 # PRs, because the full build is expensive, and so the push credential only
 # ever meets merged code.
@@ -27,8 +27,8 @@ steps:
   # One step, because the images live in its docker daemon until they're pushed.
   # The virt-v2v and deep-inspection images are amd64-only, as is the build.
   - name: images
-    # Only merges to main or a rel/* branch publish.
-    when: GIT_REF_TYPE == 'MERGE' && (GIT_BRANCH == 'main' || GIT_BRANCH =~ '^rel/')
+    # Only merges to main or a release-calient-* branch publish.
+    when: GIT_REF_TYPE == 'MERGE' && (GIT_BRANCH == 'main' || GIT_BRANCH =~ '^release-calient-')
     jobSize: large
     requests: {cpu: 7000m, memory: 12Gi}
     timeout: 3h
@@ -54,7 +54,7 @@ steps:
   # the run; the job artifact below is only for reading a run's output.
   - name: manifests
     depends: [images]
-    when: GIT_REF_TYPE == 'MERGE' && (GIT_BRANCH == 'main' || GIT_BRANCH =~ '^rel/')
+    when: GIT_REF_TYPE == 'MERGE' && (GIT_BRANCH == 'main' || GIT_BRANCH =~ '^release-calient-')
     useGoBuild: true
     requests: {cpu: 500m, memory: 1Gi}
     # The push credential for the manifests' registry, read only by the login,

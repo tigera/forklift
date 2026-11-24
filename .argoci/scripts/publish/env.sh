@@ -9,21 +9,23 @@ GIT_SHA=${CI_GIT_SHA:-$(git rev-parse HEAD)}
 # The branch the commit was merged to. Run by hand, the tree's own branch.
 GIT_BRANCH=${CI_GIT_BRANCH:-$(git rev-parse --abbrev-ref HEAD)}
 
-# The tag names the release the branch leads up to: rel/v3.24.0-3 builds
-# v3.24.0-3-dev.g<commit>. Other branches have no release to name, so they
-# build v0.0.0-dev.g<commit>. The console plugin uses the version as its
-# manifest version, which the console requires to be semver, so a rel/ branch
-# whose name isn't a version fails here.
+# The tag is the commit's git describe against the dev tags Calico Enterprise's
+# branch cut pushes here, computed exactly as its release tool computes it, so a
+# hashrelease's pin names this build. Describe needs those tags and the history
+# back to them, which a CI checkout may lack. The console plugin uses the
+# version as its manifest version, which the console requires to be semver, so
+# a commit with no dev tag behind it fails here rather than describing as a
+# bare commit.
+describe_tags=(--tags --match 'v[0-9]*.[0-9]*.[0-9]*')
 if [ -z "${TAG:-}" ]; then
-  case ${GIT_BRANCH} in
-    rel/*)
-      TAG=${GIT_BRANCH#rel/}
-      [[ ${TAG} =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]] \
-        || { echo "branch ${GIT_BRANCH} is not named rel/v<semver>" >&2; return 1; }
-      ;;
-    *) TAG=v0.0.0 ;;
-  esac
-  TAG=${TAG}-dev.g${GIT_SHA:0:12}
+  if [ "$(git rev-parse --is-shallow-repository)" = true ]; then
+    git fetch -q --unshallow --tags origin
+  elif ! git describe "${describe_tags[@]}" "${GIT_SHA}" >/dev/null 2>&1; then
+    git fetch -q --tags origin
+  fi
+  TAG=$(git describe "${describe_tags[@]}" --always --long --abbrev=12 "${GIT_SHA}")
+  [[ ${TAG} =~ ^v[0-9]+\.[0-9]+\.[0-9]+-[0-9A-Za-z.-]+$ ]] \
+    || { echo "${GIT_SHA} describes as ${TAG}; push a v<semver> dev tag behind it" >&2; return 1; }
 fi
 VERSION=${TAG#v}
 
@@ -58,6 +60,9 @@ MANIFEST_FILES=(
 )
 MANIFESTS_REPO=${MANIFESTS_REPO:-gcr.io/unique-caldron-775/cnx/tigera/forklift-manifests}
 MANIFESTS_REF=${MANIFESTS_REPO}:${TAG}
+# The release tool fetches by commit, not by TAG: a branch cut adds dev tags to
+# commits already published, which changes their describe without a publish.
+MANIFESTS_COMMIT_TAG=g${GIT_SHA:0:12}
 MANIFESTS_ARTIFACT_TYPE=application/vnd.tigera.forklift.manifests
 
 # The images built from this repo, as "<make target> <image name>". Each one's
