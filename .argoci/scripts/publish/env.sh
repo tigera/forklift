@@ -1,7 +1,8 @@
 # Settings every publish script shares. Sourced, not run.
 #
-# Everything is derived from the commit being built, so each step of the
-# workflow arrives at the same tag and image names without passing them along.
+# Everything is derived from the commit being built, except TAG: a dev tag
+# pushed mid-publish would change a second describe, so the workflow describes
+# once and hands TAG to later steps.
 
 # The commit Argo checked out. Run by hand, the tree's own HEAD.
 GIT_SHA=${CI_GIT_SHA:-$(git rev-parse HEAD)}
@@ -44,6 +45,8 @@ ORAS=${OUT}/bin/oras
 # it can pick the credential up, and out of $HOME, so it can be deleted.
 ORAS_REGISTRY_CONFIG=/tmp/forklift-registry-auth.json
 
+# Each version also needs its console plugin's commit in forks.env and its
+# loader check in check-images.sh.
 OCP_VERSIONS=(4.21 4.22)
 OCP_ERAS=()
 for version in "${OCP_VERSIONS[@]}"; do
