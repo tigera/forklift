@@ -77,7 +77,7 @@ steps:
     commands: |
       artifact pull workflow forklift-publish-tag --destination /tmp/forklift-publish-tag
       TAG=$(cat /tmp/forklift-publish-tag)
-      export TAG
+      export TAG="${TAG:?the images step handed over no TAG}"
       env -u GCR_KEY .argoci/scripts/publish/render-manifests.sh
       env -u GCR_KEY .argoci/scripts/publish/install-oras.sh
       printenv GCR_KEY | _output/publish/bin/oras login --registry-config /tmp/forklift-registry-auth.json --username _json_key --password-stdin "${MANIFESTS_REPO%%/*}"

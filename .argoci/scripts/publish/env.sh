@@ -7,9 +7,6 @@
 # The commit Argo checked out. Run by hand, the tree's own HEAD.
 GIT_SHA=${CI_GIT_SHA:-$(git rev-parse HEAD)}
 
-# The branch the commit was merged to. Run by hand, the tree's own branch.
-GIT_BRANCH=${CI_GIT_BRANCH:-$(git rev-parse --abbrev-ref HEAD)}
-
 # The tag is the commit's git describe against the v<semver> dev tags on its
 # branch, with exactly these flags, so anyone who describes the same commit the
 # same way names this build. Describe needs the tags and the history back to
@@ -19,9 +16,10 @@ GIT_BRANCH=${CI_GIT_BRANCH:-$(git rev-parse --abbrev-ref HEAD)}
 # bare commit.
 describe_tags=(--tags --match 'v[0-9]*.[0-9]*.[0-9]*')
 if [ -z "${TAG:-}" ]; then
+  # Always, since a stale clone can still describe, against an older tag.
   if [ "$(git rev-parse --is-shallow-repository)" = true ]; then
     git fetch -q --unshallow --tags origin
-  elif ! git describe "${describe_tags[@]}" "${GIT_SHA}" >/dev/null 2>&1; then
+  else
     git fetch -q --tags origin
   fi
   TAG=$(git describe "${describe_tags[@]}" --always --long --abbrev=12 "${GIT_SHA}")
@@ -62,7 +60,8 @@ for era in "${OCP_ERAS[@]}" kubernetes; do
   MANIFEST_FILES+=("forklift-operator-${era}.yaml" "forklift-controller-${era}.yaml")
 done
 # Tagging dev tags onto a commit already published changes its describe, and
-# so TAG, without a new publish; this second tag on the artifact doesn't change.
+# so TAG, without a new publish; this second tag on the artifact names the
+# commit's latest publish whatever its describe.
 MANIFESTS_COMMIT_TAG=g${GIT_SHA:0:12}
 MANIFESTS_ARTIFACT_TYPE=application/vnd.tigera.forklift.manifests
 
