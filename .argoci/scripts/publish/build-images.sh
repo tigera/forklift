@@ -41,7 +41,7 @@ docker build --pull --platform linux/amd64 \
   -f "${OUT}/must-gather/build/Dockerfile" \
   -t "${REL_IMG}/forklift-must-gather:${TAG}" "${OUT}/must-gather"
 
-for era in ocp421 ocp422; do
+for era in "${OCP_ERAS[@]}"; do
   branch_var=CONSOLE_PLUGIN_${era^^}_BRANCH sha_var=CONSOLE_PLUGIN_${era^^}_SHA
   echo "Building the ${era} console plugin from ${!branch_var} at ${!sha_var}"
   checkout "${CONSOLE_PLUGIN_REPO}" "${!branch_var}" "${!sha_var}" "${OUT}/console-plugin-${era}"

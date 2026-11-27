@@ -97,7 +97,7 @@ cat >> "${overlay}-k8s/kustomization.yaml" <<'EOF'
               $patch: delete
 EOF
 
-for era in ocp421 ocp422; do
+for era in "${OCP_ERAS[@]}"; do
   UI_PLUGIN_IMAGE=${REL_IMG}/forklift-console-plugin:${TAG}-${era}
   kubectl kustomize --load-restrictor LoadRestrictionsNone "${overlay}" \
     | fill_placeholders > "${manifests}/forklift-operator-${era}.yaml"
@@ -108,7 +108,7 @@ kubectl kustomize --load-restrictor LoadRestrictionsNone "${overlay}-k8s" \
 
 # The CRs carry only per-cluster choices; every image is in the operator
 # manifest. Plain Kubernetes turns off what needs OpenShift.
-for era in ocp421 ocp422; do
+for era in "${OCP_ERAS[@]}"; do
   cat > "${manifests}/forklift-controller-${era}.yaml" <<EOF
 apiVersion: forklift.konveyor.io/v1beta1
 kind: ForkliftController
@@ -146,7 +146,7 @@ EOF
 # so a missing or empty file would pass them all. Check the files first.
 failed=0
 fail() { echo "FAIL $*"; failed=1; }
-for era in ocp421 ocp422 kubernetes; do
+for era in "${OCP_ERAS[@]}" kubernetes; do
   grep -q '^  name: forklift-operator$' "${manifests}/forklift-operator-${era}.yaml" \
     || fail "forklift-operator-${era}.yaml has no forklift-operator resources"
 done
@@ -155,7 +155,8 @@ done
 while read -r name; do
   fail "${name} was left unfilled"
 done < <(grep -ohE '\$\{[A-Za-z_0-9]+\}' "${manifests}"/forklift-operator-*.yaml | sort -u)
-grep -q 'DATASTORE_NAME' "${manifests}/forklift-operator-ocp421.yaml" \
+first=${manifests}/forklift-operator-${OCP_ERAS[0]}.yaml
+grep -q 'DATASTORE_NAME' "${first}" \
   || fail "the CRD description text lost its \$DATASTORE_NAME"
 if grep -q 'olm.targetNamespaces' "${manifests}"/forklift-operator-*.yaml; then
   fail "the WATCH_NAMESPACE patch did not apply"
@@ -163,11 +164,13 @@ fi
 if grep -q 'UI_PLUGIN_IMAGE' "${manifests}/forklift-operator-kubernetes.yaml"; then
   fail "the Kubernetes manifest still sets UI_PLUGIN_IMAGE"
 fi
-if ! diff <(grep -v console-plugin "${manifests}/forklift-operator-ocp421.yaml") \
-          <(grep -v console-plugin "${manifests}/forklift-operator-ocp422.yaml") >/dev/null; then
-  fail "the two OpenShift manifests differ by more than the plugin image"
-fi
-grep -q calico "${manifests}/forklift-operator-ocp421.yaml" \
+for era in "${OCP_ERAS[@]:1}"; do
+  if ! diff <(grep -v console-plugin "${first}") \
+            <(grep -v console-plugin "${manifests}/forklift-operator-${era}.yaml") >/dev/null; then
+    fail "the ${OCP_ERAS[0]} and ${era} manifests differ by more than the plugin image"
+  fi
+done
+grep -q calico "${first}" \
   || fail "the manifests have no Calico CRD fields or RBAC"
 
 ls -l "${manifests}"
