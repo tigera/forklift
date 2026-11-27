@@ -27,13 +27,15 @@ for image in $(echo "${TREE_IMAGES}" | awk 'NF {print $2}'); do
   check_revision "${REL_IMG}/${image}:${TAG}" "${GIT_SHA}"
 done
 check_revision "${REL_IMG}/forklift-must-gather:${TAG}" "${MUST_GATHER_SHA}"
-check_revision "${REL_IMG}/forklift-console-plugin:${TAG}-ocp421" "${CONSOLE_PLUGIN_OCP421_SHA}"
-check_revision "${REL_IMG}/forklift-console-plugin:${TAG}-ocp422" "${CONSOLE_PLUGIN_OCP422_SHA}"
+for era in "${OCP_ERAS[@]}"; do
+  sha_var=CONSOLE_PLUGIN_${era^^}_SHA
+  check_revision "${REL_IMG}/forklift-console-plugin:${TAG}-${era}" "${!sha_var}"
+done
 
 # The console loader changed at 4.22, so each era's plugin must call the entry
 # function its consoles expect. Consoles up to 4.21 also reject any plugin ID
 # but <name>@<manifest version>.
-for era in ocp421 ocp422; do
+for era in "${OCP_ERAS[@]}"; do
   image=${REL_IMG}/forklift-console-plugin:${TAG}-${era}
   dir=${OUT}/plugin-files-${era}
   rm -rf "${dir}"
@@ -43,6 +45,7 @@ for era in ocp421 ocp422; do
   case ${era} in
     ocp421) want="loadPluginEntry(\"forklift-console-plugin@${VERSION}\"" ;;
     ocp422) want='__load_plugin_entry__("forklift-console-plugin"' ;;
+    *) echo "FAIL ${image}: no loader check for ${era}"; failed=1; continue ;;
   esac
   if ! grep -qE "\"version\": *\"${VERSION}\"" "${dir}/plugin-manifest.json"; then
     echo "FAIL ${image} has manifest version $(grep -oE '"version": *"[^"]*"' "${dir}/plugin-manifest.json"), want ${VERSION}"
